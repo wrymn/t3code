@@ -219,3 +219,29 @@ describe("right panel new-tab shortcut", () => {
     expect(document.querySelector('[role="menu"]:not([data-closed])')).toBeNull();
   });
 });
+
+describe("right panel tab activation", () => {
+  it("activates from the icon and label, and closes only from the separate close button", async () => {
+    const surface = { id: "diff" as const, kind: "diff" as const };
+    const onActivate = vi.fn();
+    const onCloseSurface = vi.fn();
+    await renderPanel({
+      surfaces: [surface],
+      activeSurfaceId: surface.id,
+      onActivate,
+      onCloseSurface,
+    });
+    const tab = container.querySelector("[data-active-tab]")!;
+    const activate = tab.querySelector("button")!;
+    await act(() =>
+      activate.querySelector("svg")!.dispatchEvent(new MouseEvent("click", { bubbles: true })),
+    );
+    await act(() => activate.click());
+    expect(onActivate).toHaveBeenCalledTimes(2);
+    expect(onActivate).toHaveBeenLastCalledWith(surface);
+    expect(onCloseSurface).not.toHaveBeenCalled();
+    await act(() => tab.querySelector<HTMLButtonElement>('[aria-label="Close Diff"]')!.click());
+    expect(onCloseSurface).toHaveBeenCalledExactlyOnceWith(surface);
+    expect(onActivate).toHaveBeenCalledTimes(2);
+  });
+});
