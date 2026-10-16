@@ -14,6 +14,7 @@ import {
   ChevronDownIcon,
   Columns2Icon,
   FolderTreeIcon,
+  SquareArrowOutUpRightIcon,
   PilcrowIcon,
   Rows3Icon,
   TextWrapIcon,
@@ -168,16 +169,36 @@ function DiffFileHeaderSuffix({
   error,
   truncated,
   onRetry,
+  onOpenFile,
 }: {
   filePath: string;
   hasStat: boolean;
   error: boolean;
   truncated: boolean;
   onRetry: (path: string) => void;
+  onOpenFile: (path: string) => void;
 }) {
   return (
     <>
       <DiffFilePathCopyButton filePath={filePath} />
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              size="icon-micro"
+              variant="ghost-muted"
+              aria-label={`Open ${filePath} in a tab`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenFile(filePath);
+              }}
+            />
+          }
+        >
+          <SquareArrowOutUpRightIcon className="size-3" />
+        </TooltipTrigger>
+        <TooltipPopup>Open file in a tab</TooltipPopup>
+      </Tooltip>
       {hasStat ? (
         <DiffFileStatus error={error} truncated={truncated} retry={() => onRetry(filePath)} />
       ) : null}
@@ -1104,15 +1125,6 @@ export default function DiffPanel({
                         return;
                       }
                     }
-                    const title = composedPath.find(
-                      (node): node is HTMLElement =>
-                        node instanceof HTMLElement && node.hasAttribute("data-title"),
-                    );
-                    const filePath = title?.textContent;
-                    if (filePath) {
-                      openDiffFile(filePath);
-                      return;
-                    }
                     const header = composedPath.find(
                       (node): node is HTMLElement =>
                         node instanceof HTMLElement && node.hasAttribute("data-diffs-header"),
@@ -1164,6 +1176,7 @@ export default function DiffPanel({
                           error={state?.error ?? false}
                           truncated={state?.truncated ?? false}
                           onRetry={retry}
+                          onOpenFile={openDiffFile}
                         />
                       );
                     }}
