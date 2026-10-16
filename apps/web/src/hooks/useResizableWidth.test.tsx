@@ -51,15 +51,17 @@ function pointer(clientX = 100) {
 function Panel({
   edge = "left",
   maxWidth = 800,
+  defaultWidth = 400,
   storageKey = "test-panel-width",
 }: {
   edge?: "left" | "right";
   maxWidth?: number;
+  defaultWidth?: number;
   storageKey?: string;
 }) {
   const resize = useResizableWidth({
     storageKey,
-    defaultWidth: 400,
+    defaultWidth,
     minWidth: 200,
     maxWidth,
     edge,
@@ -250,5 +252,33 @@ describe("panel width storage changes", () => {
     expect(setItem).not.toHaveBeenCalled();
     await act(() => renderer.update(<Panel />));
     expect(result.width).toBe(400);
+  });
+});
+
+describe("automatic panel width", () => {
+  it("follows content changes until the reader resizes", async () => {
+    await act(() => renderer.update(<Panel defaultWidth={520} />));
+    expect(result.width).toBe(520);
+    expect(setItem).not.toHaveBeenCalled();
+    await act(() => {
+      result.handlers.onPointerDown(pointer());
+      result.handlers.onPointerUp(pointer(50));
+    });
+    await act(() => renderer.update(<Panel defaultWidth={700} />));
+    expect(result.width).toBe(570);
+    await act(() => renderer.unmount());
+    await act(() => {
+      renderer = create(<Panel defaultWidth={700} />);
+    });
+    expect(result.width).toBe(570);
+  });
+
+  it("restores a saved width after a narrow initial layout expands", async () => {
+    savedWidths.set("narrow-panel", "600");
+    await act(() => renderer.update(<Panel storageKey="narrow-panel" maxWidth={300} />));
+    expect(result.width).toBe(300);
+    await act(() => renderer.update(<Panel storageKey="narrow-panel" maxWidth={800} />));
+    expect(result.width).toBe(600);
+    expect(setItem).not.toHaveBeenCalled();
   });
 });

@@ -61,7 +61,6 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { DiffFileTree } from "../diffs/DiffFileTree";
-import { DiffFileTreePanel } from "../diffs/DiffFileTreePanel";
 import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
 import { diffFileTreeEntries } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
@@ -1462,33 +1461,33 @@ function PullRequestCodeTab({
           />
         </div>
         {fileTreeOpen ? (
-          <DiffFileTreePanel defaultWidth={320} minWidth={192}>
-            <DiffFileTree
-              ariaLabel={`Pull request #${detail.number} files`}
-              entries={fileTreeEntries}
-              onSelectFile={revealFile}
-              footer={
-                nextCursor === null ? null : (
-                  <div className="shrink-0 border-t border-border/60 p-2">
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant="outline"
-                      className="w-full"
-                      disabled={diffQuery.isPending}
-                      onClick={diffQuery.error !== null ? () => diffQuery.refresh() : loadNextSlice}
-                    >
-                      {diffQuery.error !== null
-                        ? "Retry"
-                        : diffQuery.isPending
-                          ? "Loading more files..."
-                          : "Load more files"}
-                    </Button>
-                  </div>
-                )
-              }
-            />
-          </DiffFileTreePanel>
+          <DiffFileTree
+            defaultWidth={320}
+            minWidth={192}
+            ariaLabel={`Pull request #${detail.number} files`}
+            entries={fileTreeEntries}
+            onSelectFile={revealFile}
+            footer={
+              nextCursor === null ? null : (
+                <div className="shrink-0 border-t border-border/60 p-2">
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    className="w-full"
+                    disabled={diffQuery.isPending}
+                    onClick={diffQuery.error !== null ? () => diffQuery.refresh() : loadNextSlice}
+                  >
+                    {diffQuery.error !== null
+                      ? "Retry"
+                      : diffQuery.isPending
+                        ? "Loading more files..."
+                        : "Load more files"}
+                  </Button>
+                </div>
+              )
+            }
+          />
         ) : null}
       </div>
       {unstructured}

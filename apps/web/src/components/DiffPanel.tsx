@@ -55,7 +55,6 @@ import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./Dif
 import { DiffStatLabel } from "./chat/DiffStatLabel";
 import { AnnotatableCodeView, type AnnotatableCodeViewHandle } from "./diffs/AnnotatableCodeView";
 import { DiffFileTree } from "./diffs/DiffFileTree";
-import { DiffFileTreePanel } from "./diffs/DiffFileTreePanel";
 import { diffFileTreeEntries } from "./diffs/diffFileTree.logic";
 import { Button } from "./ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -1210,15 +1209,13 @@ export default function DiffPanel({
                   />
                 </div>
                 {fileTreeOpen ? (
-                  <DiffFileTreePanel>
-                    <DiffFileTree
-                      ariaLabel={`${reviewSectionTitle} files`}
-                      entries={fileTreeEntries}
-                      selectedPath={selectedFilePath}
-                      revealRequestId={selectedFileRevealRequestId}
-                      onSelectFile={revealDiffFile}
-                    />
-                  </DiffFileTreePanel>
+                  <DiffFileTree
+                    ariaLabel={`${reviewSectionTitle} files`}
+                    entries={fileTreeEntries}
+                    selectedPath={selectedFilePath}
+                    revealRequestId={selectedFileRevealRequestId}
+                    onSelectFile={revealDiffFile}
+                  />
                 ) : null}
               </div>
             ) : (

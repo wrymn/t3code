@@ -19,6 +19,7 @@ import {
   diffFileTreePositions,
   type DiffFileTreeEntry,
 } from "./diffFileTree.logic";
+import { DiffFileTreePanel } from "./DiffFileTreePanel";
 
 export type { DiffFileTreeEntry } from "./diffFileTree.logic";
 
@@ -31,6 +32,8 @@ interface DiffFileTreeProps {
   readonly headerAccessory?: ReactNode;
   readonly footer?: ReactNode;
   readonly className?: string;
+  readonly defaultWidth?: number;
+  readonly minWidth?: number;
 }
 
 export function DiffFileTree({
@@ -42,6 +45,8 @@ export function DiffFileTree({
   headerAccessory,
   footer,
   className,
+  defaultWidth = 256,
+  minWidth = 160,
 }: DiffFileTreeProps) {
   const { resolvedTheme } = useTheme();
   const paths = useMemo(() => entries.map((entry) => entry.path), [entries]);
@@ -148,72 +153,75 @@ export function DiffFileTree({
   }, [model, paths, revealRequestId, selectedPath]);
 
   return (
-    <div className={cn("flex min-h-0 flex-1 flex-col bg-background", className)}>
-      <div
-        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 text-xs text-muted-foreground in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
-        data-surface-subheader
-      >
-        <span className="px-1 font-medium text-foreground">Files</span>
-        <span className="ml-auto tabular-nums">{entries.length}</span>
-        {headerAccessory}
-        {directoryPaths.length > 0 ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label={
-                    allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"
-                  }
-                  onClick={() =>
-                    setAllDirectoriesExpanded(model, directoryPaths, !allDirectoriesExpanded)
-                  }
+    <DiffFileTreePanel model={model} defaultWidth={defaultWidth} minWidth={minWidth}>
+      <div className={cn("flex min-h-0 flex-1 flex-col bg-background", className)}>
+        <div
+          className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 text-xs text-muted-foreground in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
+          data-surface-subheader
+        >
+          <span className="px-1 font-medium text-foreground">Files</span>
+          <span className="ml-auto tabular-nums">{entries.length}</span>
+          {headerAccessory}
+          {directoryPaths.length > 0 ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label={
+                      allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"
+                    }
+                    onClick={() =>
+                      setAllDirectoriesExpanded(model, directoryPaths, !allDirectoriesExpanded)
+                    }
+                  />
+                }
+              >
+                <MorphIcon
+                  className="size-3.5"
+                  icon={allDirectoriesExpanded ? ChevronsDownUp : ChevronsUpDown}
                 />
-              }
-            >
-              <MorphIcon
-                className="size-3.5"
-                icon={allDirectoriesExpanded ? ChevronsDownUp : ChevronsUpDown}
-              />
-            </TooltipTrigger>
-            <TooltipPopup>
-              {allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
-            </TooltipPopup>
-          </Tooltip>
-        ) : null}
+              </TooltipTrigger>
+              <TooltipPopup>
+                {allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
+        </div>
+        <FileTree
+          model={model}
+          aria-label={ariaLabel}
+          onClickCapture={(event) => {
+            if (
+              event.defaultPrevented ||
+              event.button !== 0 ||
+              event.ctrlKey ||
+              event.metaKey ||
+              event.shiftKey ||
+              event.altKey
+            ) {
+              return;
+            }
+            // Pierre does not emit a selection change for its sole selected row.
+            // Read selection before the row handles the click so new selections reveal only once.
+            const selected = model.getSelectedPaths();
+            const path = selected.length === 1 ? selected[0] : undefined;
+            if (!path || !filePathsRef.current.has(path)) return;
+            const clickedSelectedRow = event.nativeEvent
+              .composedPath()
+              .some(
+                (node) =>
+                  node instanceof HTMLElement && node.getAttribute("data-item-path") === path,
+              );
+            if (clickedSelectedRow) onSelectFileRef.current(path);
+          }}
+          className="min-h-0 flex-1 overflow-hidden"
+          style={pierreTreeStyle(resolvedTheme)}
+        />
+        {footer}
       </div>
-      <FileTree
-        model={model}
-        aria-label={ariaLabel}
-        onClickCapture={(event) => {
-          if (
-            event.defaultPrevented ||
-            event.button !== 0 ||
-            event.ctrlKey ||
-            event.metaKey ||
-            event.shiftKey ||
-            event.altKey
-          ) {
-            return;
-          }
-          // Pierre does not emit a selection change for its sole selected row.
-          // Read selection before the row handles the click so new selections reveal only once.
-          const selected = model.getSelectedPaths();
-          const path = selected.length === 1 ? selected[0] : undefined;
-          if (!path || !filePathsRef.current.has(path)) return;
-          const clickedSelectedRow = event.nativeEvent
-            .composedPath()
-            .some(
-              (node) => node instanceof HTMLElement && node.getAttribute("data-item-path") === path,
-            );
-          if (clickedSelectedRow) onSelectFileRef.current(path);
-        }}
-        className="min-h-0 flex-1 overflow-hidden"
-        style={pierreTreeStyle(resolvedTheme)}
-      />
-      {footer}
-    </div>
+    </DiffFileTreePanel>
   );
 }

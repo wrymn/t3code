@@ -34,8 +34,8 @@ export interface ResizableWidthHandlers {
 }
 
 /**
- * Width is read on mount or storage-key changes and persisted on drag-end (not on every rAF tick
- * — would otherwise be ~60 writes/sec).
+ * Follows the default until a width is saved. Reads storage on mount/key changes and persists
+ * on drag-end, not every animation frame.
  */
 export function useResizableWidth(options: UseResizableWidthOptions): {
   readonly width: number;
@@ -52,13 +52,12 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
   );
 
   const readWidth = () => {
-    if (typeof window === "undefined") return defaultWidth;
+    if (typeof window === "undefined") return null;
     try {
-      const stored = getLocalStorageItem(storageKey, WidthSchema);
-      return clamp(stored ?? defaultWidth);
+      return getLocalStorageItem(storageKey, WidthSchema);
     } catch (error) {
       console.error("Could not read persisted panel width.", error);
-      return defaultWidth;
+      return null;
     }
   };
   const [widthState, setWidthState] = useState(() => ({ storageKey, width: readWidth() }));
@@ -66,7 +65,7 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     setWidthState({ storageKey, width: readWidth() });
   }
 
-  const clampedWidth = clamp(widthState.width);
+  const clampedWidth = clamp(widthState.width ?? defaultWidth);
   const latestOptions = useRef({ clamp, storageKey, width: clampedWidth });
   useLayoutEffect(() => {
     latestOptions.current = { clamp, storageKey, width: clampedWidth };
