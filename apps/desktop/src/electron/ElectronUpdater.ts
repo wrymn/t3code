@@ -182,8 +182,11 @@ const makeFork = (fork: ForkUpdater.ForkUpdater) =>
         catch: (cause) => new ElectronUpdaterDownloadUpdateError({ channel, cause }),
       });
     }),
-    quitAndInstall: ({ isSilent, isForceRunAfter }) =>
-      Effect.try({
+    quitAndInstall: Effect.fn("ElectronUpdater.quitAndInstall")(function ({
+      isSilent,
+      isForceRunAfter,
+    }) {
+      return Effect.try({
         try: fork.quitAndInstall,
         catch: (cause) =>
           new ElectronUpdaterQuitAndInstallError({
@@ -192,7 +195,8 @@ const makeFork = (fork: ForkUpdater.ForkUpdater) =>
             isForceRunAfter,
             cause,
           }),
-      }),
+      });
+    }),
   });
 
 export const layer = Layer.sync(ElectronUpdater, () => {
