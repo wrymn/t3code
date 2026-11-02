@@ -32,12 +32,24 @@ main() {
   release_branch=fork-release
   tag=v$version
 
-  if [ ! -d "$fork_dir/.git" ] && [ ! -f "$fork_dir/.git" ]; then
-    git -C "$primary_repo" worktree add -B "$release_branch" "$fork_dir" "$fork_branch" >/dev/null 2>&1 ||
-      fail "Could not create the release worktree at $fork_dir"
+  if [ ! -e "$fork_dir" ]; then
+    if git -C "$primary_repo" show-ref --verify --quiet "refs/heads/$release_branch"; then
+      git -C "$primary_repo" worktree add "$fork_dir" "$release_branch" >/dev/null 2>&1
+    else
+      git -C "$primary_repo" worktree add -b "$release_branch" "$fork_dir" "$fork_branch" >/dev/null 2>&1
+    fi || fail "Could not create the release worktree at $fork_dir"
   fi
   cd "$fork_dir" || fail "Missing release worktree $fork_dir"
+  # Never merge upstream into some other checkout or branch, such as main.
+  [ "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" = "$common_dir" ] ||
+    fail "$fork_dir is not a worktree of $primary_repo"
+  [ "$(git symbolic-ref --short -q HEAD)" = "$release_branch" ] ||
+    fail "$fork_dir must have $release_branch checked out"
+
   mkdir -p release
+  lock="$fork_dir/release/fork-update.lock"
+  mkdir "$lock" 2>/dev/null || fail "Another fork update is running (remove $lock if not)"
+  trap 'rm -rf "$lock"' EXIT INT TERM
   log="$fork_dir/release/fork-update.log"
   : >"$log"
 
@@ -45,6 +57,10 @@ main() {
   git fetch "$upstream" --tags --quiet >>"$log" 2>&1 || fail "git fetch $upstream failed (log: $log)"
   git rev-parse --verify --quiet "$tag^{commit}" >/dev/null || fail "Upstream tag $tag not found"
   [ -z "$(git status --porcelain)" ] || fail "Release worktree $fork_dir has uncommitted changes"
+  # Non-merge commits that are in neither the tag nor the fork branch are newer
+  # upstream work; building would label that source with an older version.
+  [ -z "$(git rev-list --no-merges -n 1 HEAD "^$tag" "^$fork_branch")" ] ||
+    fail "$fork_dir has commits outside $tag and $fork_branch (newer upstream work, or rewritten $fork_branch history)"
 
   echo "@progress 5"
   merge "$fork_branch"
@@ -54,7 +70,9 @@ main() {
   vp i >>"$log" 2>&1 || fail "vp i failed (log: $log)"
 
   echo "@progress 20"
-  out="$fork_dir/release/fork"
+  # One directory per version, so a build never replaces an app the desktop
+  # app has already offered to install.
+  out="$fork_dir/release/fork/$version"
   rm -rf "$out"
   # Progress during the build is approximate: one point per few log lines.
   {

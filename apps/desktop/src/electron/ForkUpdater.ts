@@ -20,14 +20,25 @@ const ForkPackageMetadata = Schema.fromJsonString(
 );
 const decodeForkPackageMetadata = Schema.decodeUnknownOption(ForkPackageMetadata);
 
+// Stages the new bundle beside the current one so the swap itself is two
+// renames, and reopens whichever app ends up in place. The log sits next to
+// the built app in the release worktree.
 const SWAP_APP_SCRIPT = `
 pid=$1 next=$2 current=$3
+exec >>"$(dirname "$next")/install.log" 2>&1
+staged="$current.next" previous="$current.previous"
+rm -rf "$staged" "$previous"
+ditto "$next" "$staged" && staged_ok=1 || echo "staging $next failed"
 while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done
-rm -rf "$current.previous"
-if mv "$current" "$current.previous"; then
-  if ditto "$next" "$current"; then rm -rf "$current.previous"
-  else rm -rf "$current"; mv "$current.previous" "$current"; fi
+if [ -n "\${staged_ok:-}" ] && mv "$current" "$previous"; then
+  if mv "$staged" "$current"; then
+    if open "$current"; then rm -rf "$previous"; exit 0; fi
+    echo "opening the new app failed, restoring the previous one"
+    rm -rf "$current"
+  fi
+  mv "$previous" "$current"
 fi
+rm -rf "$staged"
 open "$current"
 `;
 
@@ -106,7 +117,7 @@ export function fromPackagedApp(): ForkUpdater | undefined {
     },
     quitAndInstall: () => {
       const bundle = currentAppBundle();
-      if (builtApp === undefined || bundle === undefined) {
+      if (builtApp === undefined || bundle === undefined || !NodeFS.existsSync(builtApp)) {
         throw new ForkUpdateFailure("No rebuilt app to install.");
       }
       NodeChildProcess.spawn(
