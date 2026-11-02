@@ -11,6 +11,8 @@
 # Output protocol on stdout: "@progress <0-100>", "@app <path>", "@error <msg>".
 # Everything else goes to the log file.
 #
+# Signing: git config fork.signIdentity <codesigning identity hash or name>.
+#
 # Env overrides: T3CODE_FORK_DIR (release worktree), T3CODE_FORK_BRANCH (branch
 # holding your changes, default main), T3CODE_FORK_UPSTREAM (remote, default upstream).
 
@@ -109,6 +111,13 @@ main() {
   ditto -x -k "$zip" "$extracted" || fail "Could not extract $zip"
   app=$(ls -d "$extracted"/*.app 2>/dev/null | head -n 1)
   [ -n "$app" ] || fail "No .app inside $zip"
+  # Unsigned builds get a new ad-hoc identity each time, which resets keychain
+  # "Always Allow" and privacy grants on every update. A stable certificate keeps them.
+  identity=$(git config fork.signIdentity)
+  if [ -n "$identity" ]; then
+    codesign --force --deep --preserve-metadata=entitlements --sign "$identity" "$app" >>"$log" 2>&1 ||
+      fail "Signing with $identity failed (log: $log)"
+  fi
 
   echo "@progress 100"
   echo "@app $app"
