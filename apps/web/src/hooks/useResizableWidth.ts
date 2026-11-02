@@ -7,7 +7,11 @@ import {
   useState,
 } from "react";
 
-import { getLocalStorageItem, setLocalStorageItem } from "./useLocalStorage";
+import {
+  getLocalStorageItem,
+  removeLocalStorageItem,
+  setLocalStorageItem,
+} from "./useLocalStorage";
 import { useResizeDrag } from "./useResizeDrag";
 
 const WidthSchema = Schema.Finite;
@@ -35,10 +39,12 @@ export interface ResizableWidthHandlers {
 
 /**
  * Follows the default until a width is saved. Reads storage on mount/key changes and persists
- * on drag-end, not every animation frame.
+ * on drag-end, not every animation frame. `reset` forgets the saved width.
  */
 export function useResizableWidth(options: UseResizableWidthOptions): {
   readonly width: number;
+  readonly saved: boolean;
+  readonly reset: () => void;
   readonly handlers: ResizableWidthHandlers;
 } {
   const { storageKey, defaultWidth, minWidth, maxWidth, edge } = options;
@@ -84,7 +90,9 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
         host?.style.setProperty(RESIZABLE_WIDTH_PROPERTY, `${nextWidth}px`);
         return nextWidth;
       },
-      finish(finalWidth) {
+      finish(finalWidth, moved) {
+        // A click (including each half of a reset double-click) must not pin the default.
+        if (!moved) return;
         setWidthState({ storageKey, width: finalWidth });
         try {
           setLocalStorageItem(latestOptions.current.storageKey, finalWidth, WidthSchema);
@@ -106,5 +114,14 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
   // rewrites the committed width, so re-apply the live pointer position.
   useLayoutEffect(refresh, [clamp, clampedWidth, refresh]);
 
-  return { width: clampedWidth, handlers };
+  const reset = useCallback(() => {
+    setWidthState({ storageKey, width: null });
+    try {
+      removeLocalStorageItem(storageKey);
+    } catch (error) {
+      console.error("Could not clear persisted panel width.", error);
+    }
+  }, [storageKey]);
+
+  return { width: clampedWidth, saved: widthState.width !== null, reset, handlers };
 }

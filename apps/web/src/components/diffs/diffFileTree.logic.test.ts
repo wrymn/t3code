@@ -8,6 +8,7 @@ import {
   collectDirectoryPaths,
   diffFileTreePositions,
   diffFileTreeEntries,
+  diffFileTreeRows,
 } from "./diffFileTree.logic";
 
 function file(type: FileDiffMetadata["type"], name: string, prevName = name): FileDiffMetadata {
@@ -113,5 +114,23 @@ describe("buildDiffFileTreeUpdates", () => {
 
   it("produces nothing when the paths are unchanged", () => {
     expect(buildDiffFileTreeUpdates(["src/a.ts"], ["src/a.ts"])).toEqual([]);
+  });
+});
+
+describe("diffFileTreeRows", () => {
+  it("matches the rows Pierre renders with folders open and chains flattened", () => {
+    const paths = ["a/b/c/x.ts", "a/b/c/y.ts", "a/d.ts", "e/f/g.ts", "h.ts"];
+    const tree = preloadFileTree({
+      paths,
+      initialExpansion: "open",
+      flattenEmptyDirectories: true,
+    });
+    const rendered = [
+      ...tree.shadowHtml.matchAll(/<button[^>]*aria-label="([^"]+)"[^>]*aria-level="(\d+)"/g),
+    ].map((match) => `${match[2]}:${match[1]}`);
+    const rows = diffFileTreeRows(paths).map(
+      (row) => `${row.depth + 1}:${row.segments.join(" / ")}`,
+    );
+    expect(rows.toSorted()).toEqual(rendered.toSorted());
   });
 });

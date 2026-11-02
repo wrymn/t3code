@@ -1,61 +1,84 @@
 import type { FileTree } from "@pierre/trees";
-import { type CSSProperties, type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type ReactNode,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { RESIZABLE_WIDTH_PROPERTY, useResizableWidth } from "~/hooks/useResizableWidth";
 import { observeResize } from "~/lib/observeResize";
+import { DIFF_TREE_LABEL_FADE_PX } from "~/pierre-tree-theme";
 
 import { RightPanelResizeHandle } from "../preview/RightPanelResizeHandle";
+import { diffFileTreeRows } from "./diffFileTree.logic";
 
-/** Resizes the diff file list, fitting its expanded rows until the reader saves a width. */
+/** Resizes the diff file list, fitting every file's row until the reader saves a width. */
 export function DiffFileTreePanel({
   children,
   model,
+  paths,
   defaultWidth,
   minWidth,
 }: {
   children: ReactNode;
   model: FileTree;
+  paths: ReadonlyArray<string>;
   defaultWidth: number;
   minWidth: number;
 }) {
   const hostRef = useRef<HTMLElement>(null);
   const [maxWidth, setMaxWidth] = useState(640);
   const [contentWidth, setContentWidth] = useState(defaultWidth);
+  // Fit all files, not just expanded rows, so opening a folder never moves the panel edge.
+  const rows = useMemo(() => diffFileTreeRows(paths), [paths]);
+
+  const { width, saved, reset, handlers } = useResizableWidth({
+    storageKey: "t3code:diff-file-tree-width",
+    defaultWidth: contentWidth,
+    minWidth: Math.min(minWidth, maxWidth),
+    maxWidth,
+    edge: "left",
+  });
 
   useLayoutEffect(() => {
     const host = hostRef.current;
-    if (!host) return;
+    if (!host || saved) return;
     let frame = 0;
+    let measured = false;
+    const canvas = document.createElement("canvas").getContext("2d");
     const measure = () => {
       const tree = model.getFileTreeContainer();
       const row = tree?.shadowRoot?.querySelector<HTMLElement>("button[data-type='item']");
       const content = row?.querySelector<HTMLElement>("[data-item-section='content']");
-      const canvas = document.createElement("canvas").getContext("2d");
-      if (!tree || !row || !content || !canvas) return;
-      const style = getComputedStyle(row);
+      // A hidden panel lays out at zero width and would yield meaningless row chrome.
+      if (!tree || !row || !content || !canvas || tree.getBoundingClientRect().width === 0) return;
+      measured = true;
       canvas.font = getComputedStyle(content).font;
-      const gap = parseFloat(style.columnGap);
+      const gap = parseFloat(getComputedStyle(row).columnGap);
       const spacing = row.querySelector<HTMLElement>("[data-item-section='spacing']");
-      const decoration = row.querySelector<HTMLElement>("[data-item-section='decoration']");
-      // The empty decoration lane absorbs spare space; exclude it and this row's indentation.
+      // Everything but the label and this row's indentation; the label box also holds spare space.
       const chrome =
         tree.getBoundingClientRect().width -
         content.getBoundingClientRect().width -
-        (decoration?.getBoundingClientRect().width ?? 0) -
         (spacing ? spacing.getBoundingClientRect().width + gap : 0);
       const icon = row.querySelector<HTMLElement>("[data-item-section='icon']");
       const indentStart = (icon?.getBoundingClientRect().width ?? 16) / 2 - 0.5 + gap;
       // Pierre's spacing columns are 8px at normal density.
       const indentStep = 8 * model.getDensityFactor();
+      const separator = canvas.measureText("/").width + 4;
       let preferred = defaultWidth;
-      for (const item of model.getVisibleRows(0, model.getVisibleCount())) {
-        const segments = item.flattenedSegments;
-        const labelWidth = segments?.length
-          ? segments.reduce((sum, segment) => sum + canvas.measureText(segment.name).width, 0) +
-            (segments.length - 1) * (canvas.measureText("/").width + 4)
-          : canvas.measureText(item.name).width;
-        const indent = item.depth > 0 ? indentStart + item.depth * indentStep : 0;
-        preferred = Math.max(preferred, Math.ceil(chrome + indent + labelWidth + 1));
+      for (const { depth, segments } of rows) {
+        const labelWidth =
+          segments.reduce((sum, segment) => sum + canvas.measureText(segment).width, 0) +
+          (segments.length - 1) * separator;
+        const indent = depth > 0 ? indentStart + depth * indentStep : 0;
+        preferred = Math.max(
+          preferred,
+          Math.ceil(chrome + indent + labelWidth + DIFF_TREE_LABEL_FADE_PX),
+        );
       }
       setContentWidth(preferred);
     };
@@ -63,9 +86,13 @@ export function DiffFileTreePanel({
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(measure);
     };
+    // Rows and layout only need watching until the first real measurement.
+    const scheduleUntilMeasured = () => {
+      if (!measured) schedule();
+    };
     schedule();
-    const unsubscribe = model.subscribe(schedule);
-    const unobserve = observeResize(host, schedule);
+    const unsubscribe = model.subscribe(scheduleUntilMeasured);
+    const unobserve = observeResize(host, scheduleUntilMeasured);
     document.fonts.addEventListener("loadingdone", schedule);
     return () => {
       cancelAnimationFrame(frame);
@@ -73,7 +100,7 @@ export function DiffFileTreePanel({
       unobserve();
       document.fonts.removeEventListener("loadingdone", schedule);
     };
-  }, [defaultWidth, model]);
+  }, [defaultWidth, model, rows, saved]);
 
   useLayoutEffect(() => {
     const row = hostRef.current?.parentElement;
@@ -84,21 +111,13 @@ export function DiffFileTreePanel({
     return observeResize(row, measure);
   }, []);
 
-  const { width, handlers } = useResizableWidth({
-    storageKey: "t3code:diff-file-tree-width",
-    defaultWidth: contentWidth,
-    minWidth: Math.min(minWidth, maxWidth),
-    maxWidth,
-    edge: "left",
-  });
-
   return (
     <aside
       ref={hostRef}
       className="relative flex w-(--resizable-width) min-w-0 shrink-0 border-l border-border/60"
       style={{ [RESIZABLE_WIDTH_PROPERTY]: `${width}px` } as CSSProperties}
     >
-      <RightPanelResizeHandle handlers={handlers} className="touch-none" />
+      <RightPanelResizeHandle handlers={handlers} onReset={reset} className="touch-none" />
       {children}
     </aside>
   );

@@ -332,6 +332,10 @@ export const Route = createFileRoute("/_chat/pull-requests")({
 
 function PullRequestsRouteView() {
   useEscapeToGoBack();
+  // Fixed at mount: the shared width hook follows its default until the reader saves one.
+  const [panelDefaultWidth] = useState(() =>
+    typeof window === "undefined" ? 640 : Math.floor(window.innerWidth / 2),
+  );
   const modifiers = useShortcutModifierState(true);
   const speedMode =
     modifiers.shiftKey && !modifiers.metaKey && !modifiers.ctrlKey && !modifiers.altKey;
@@ -1965,7 +1969,7 @@ function PullRequestsRouteView() {
             keybindings={keybindings}
             getShortcutContext={getShortcutContext}
             widthStorageKey="t3code:pull-request-panel-width"
-            defaultWidth={typeof window === "undefined" ? 640 : Math.floor(window.innerWidth / 2)}
+            defaultWidth={panelDefaultWidth}
             surfaces={renderedRightPanelSurfaces}
             environmentId={panelEnvironmentId}
             activeSurfaceId={renderedPullRequestSurface.id}

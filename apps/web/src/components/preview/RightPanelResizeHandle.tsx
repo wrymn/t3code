@@ -4,9 +4,10 @@ import { cn } from "~/lib/utils";
 interface Props {
   handlers: ResizableWidthHandlers;
   className?: string;
+  onReset?: () => void;
 }
 
-export function RightPanelResizeHandle({ handlers, className }: Props) {
+export function RightPanelResizeHandle({ handlers, className, onReset }: Props) {
   return (
     <div
       role="separator"
@@ -16,6 +17,7 @@ export function RightPanelResizeHandle({ handlers, className }: Props) {
         className,
       )}
       {...handlers}
+      onDoubleClick={onReset}
     >
       <span
         aria-hidden

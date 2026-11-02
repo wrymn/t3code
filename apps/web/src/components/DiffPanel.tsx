@@ -14,9 +14,9 @@ import {
   ChevronDownIcon,
   Columns2Icon,
   FolderTreeIcon,
-  SquareArrowOutUpRightIcon,
   PilcrowIcon,
   Rows3Icon,
+  SquareArrowOutUpRightIcon,
   TextWrapIcon,
 } from "lucide-react";
 import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown } from "lucide";

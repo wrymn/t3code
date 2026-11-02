@@ -111,3 +111,50 @@ export function buildDiffFileTreeUpdates(
 
   return updates;
 }
+
+export interface DiffFileTreeRow {
+  readonly depth: number;
+  readonly segments: ReadonlyArray<string>;
+}
+
+interface DirectoryNode {
+  readonly children: Map<string, DirectoryNode | null>;
+}
+
+/** Rows the tree renders with every folder open and single-folder chains flattened. */
+export function diffFileTreeRows(paths: ReadonlyArray<string>): ReadonlyArray<DiffFileTreeRow> {
+  const root: DirectoryNode = { children: new Map() };
+  for (const path of paths) {
+    const parts = path.split("/").filter(Boolean);
+    let directory = root;
+    for (const [index, part] of parts.entries()) {
+      if (index === parts.length - 1) {
+        if (!directory.children.has(part)) directory.children.set(part, null);
+        break;
+      }
+      let next = directory.children.get(part);
+      if (!next) {
+        next = { children: new Map() };
+        directory.children.set(part, next);
+      }
+      directory = next;
+    }
+  }
+  const rows: DiffFileTreeRow[] = [];
+  const visit = (directory: DirectoryNode, depth: number) => {
+    for (const [name, child] of directory.children) {
+      const segments = [name];
+      let node = child;
+      while (node?.children.size === 1) {
+        const [onlyName, onlyChild] = node.children.entries().next().value!;
+        if (!onlyChild) break;
+        segments.push(onlyName);
+        node = onlyChild;
+      }
+      rows.push({ depth, segments });
+      if (node) visit(node, depth + 1);
+    }
+  };
+  visit(root, 0);
+  return rows;
+}

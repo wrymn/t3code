@@ -84,7 +84,11 @@ beforeEach(async () => {
   vi.stubGlobal("window", {
     addEventListener: events.addEventListener.bind(events),
     removeEventListener: events.removeEventListener.bind(events),
-    localStorage: { getItem: (key: string) => savedWidths.get(key) ?? null, setItem },
+    localStorage: {
+      getItem: (key: string) => savedWidths.get(key) ?? null,
+      setItem,
+      removeItem: (key: string) => savedWidths.delete(key),
+    },
   });
   vi.stubGlobal("document", { body: { style } });
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
@@ -280,5 +284,28 @@ describe("automatic panel width", () => {
     await act(() => renderer.update(<Panel storageKey="narrow-panel" maxWidth={800} />));
     expect(result.width).toBe(600);
     expect(setItem).not.toHaveBeenCalled();
+  });
+});
+
+describe("saved panel width", () => {
+  it("ignores clicks without movement", async () => {
+    await act(() => {
+      result.handlers.onPointerDown(pointer());
+      result.handlers.onPointerUp(pointer(101));
+    });
+    expect(setItem).not.toHaveBeenCalled();
+    expect(result.saved).toBe(false);
+  });
+
+  it("resets to the default after a drag", async () => {
+    await act(() => {
+      result.handlers.onPointerDown(pointer());
+      result.handlers.onPointerUp(pointer(50));
+    });
+    expect(result.saved).toBe(true);
+    await act(() => result.reset());
+    expect(result.saved).toBe(false);
+    expect(result.width).toBe(400);
+    expect(savedWidths.has("test-panel-width")).toBe(false);
   });
 });
