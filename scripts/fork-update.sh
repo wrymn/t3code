@@ -1,8 +1,10 @@
 #!/bin/sh
-# Rebuilds this fork for an upstream release: merges the fork branch and the
-# upstream release tag into a dedicated release worktree, builds the mac app,
-# and prints the built .app path. The desktop app runs this from its update
-# button (see apps/desktop/src/electron/ForkUpdater.ts).
+# Rebuilds this fork for an upstream release: resets a dedicated release
+# worktree to the upstream release tag, merges the fork branch (main) and every
+# fork/* feature branch, builds the mac app, and prints the built .app path.
+# The desktop app runs this from its update button (see
+# apps/desktop/src/electron/ForkUpdater.ts). scripts/fork-status.sh lists the
+# feature branches.
 #
 #   scripts/fork-update.sh build <upstream-version>
 #
@@ -40,7 +42,7 @@ main() {
     fi || fail "Could not create the release worktree at $fork_dir"
   fi
   cd "$fork_dir" || fail "Missing release worktree $fork_dir"
-  # Never merge upstream into some other checkout or branch, such as main.
+  # The reset below discards that checkout, so never run it anywhere else.
   [ "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" = "$common_dir" ] ||
     fail "$fork_dir is not a worktree of $primary_repo"
   [ "$(git symbolic-ref --short -q HEAD)" = "$release_branch" ] ||
@@ -57,14 +59,15 @@ main() {
   git fetch "$upstream" --tags --quiet >>"$log" 2>&1 || fail "git fetch $upstream failed (log: $log)"
   git rev-parse --verify --quiet "$tag^{commit}" >/dev/null || fail "Upstream tag $tag not found"
   [ -z "$(git status --porcelain)" ] || fail "Release worktree $fork_dir has uncommitted changes"
-  # Non-merge commits that are in neither the tag nor the fork branch are newer
-  # upstream work; building would label that source with an older version.
-  [ -z "$(git rev-list --no-merges -n 1 HEAD "^$tag" "^$fork_branch")" ] ||
-    fail "$fork_dir has commits outside $tag and $fork_branch (newer upstream work, or rewritten $fork_branch history)"
 
   echo "@progress 5"
+  # Rebuilt from the tag each time, so deleting a fork/* branch drops that
+  # feature and the version label always matches the upstream source.
+  git reset --hard --quiet "$tag" || fail "Could not reset $fork_dir to $tag"
   merge "$fork_branch"
-  merge "$tag"
+  for feature in $(git for-each-ref --format='%(refname:short)' 'refs/heads/fork/*'); do
+    merge "$feature"
+  done
 
   echo "@progress 10"
   vp i >>"$log" 2>&1 || fail "vp i failed (log: $log)"
@@ -120,7 +123,7 @@ merge() {
   if ! git merge --no-edit "$1" >>"$log" 2>&1; then
     conflicts=$(git diff --name-only --diff-filter=U | head -n 5 | tr '\n' ' ')
     git merge --abort >/dev/null 2>&1
-    fail "Merging $1 conflicts in: $conflicts. Resolve it in $fork_dir (git merge $1), commit, then update again."
+    fail "$1 conflicts with $tag in: $conflicts. Merge $tag into $1, resolve, commit, then update again."
   fi
 }
 
