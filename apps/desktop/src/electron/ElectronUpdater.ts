@@ -6,6 +6,8 @@ import * as Scope from "effect/Scope";
 
 import { autoUpdater } from "electron-updater";
 
+import * as ForkUpdater from "./ForkUpdater.ts";
+
 type AutoUpdater = typeof autoUpdater;
 
 export type ElectronUpdaterFeedUrl = Parameters<AutoUpdater["setFeedURL"]>[0];
@@ -30,6 +32,7 @@ export class ElectronUpdaterDownloadUpdateError extends Schema.TaggedError<Elect
   },
 ) {
   override get message(): string {
+    if (this.cause instanceof ForkUpdater.ForkUpdateFailure) return this.cause.message;
     return `Electron updater failed to download the update on channel ${this.channel ?? "default"}.`;
   }
 }
@@ -169,4 +172,30 @@ export const make = ElectronUpdater.of({
   },
 });
 
-export const layer = Layer.succeed(ElectronUpdater, make);
+const makeFork = (fork: ForkUpdater.ForkUpdater) =>
+  ElectronUpdater.of({
+    ...make,
+    downloadUpdate: Effect.suspend(() => {
+      const channel = autoUpdater.channel;
+      return Effect.tryPromise({
+        try: fork.downloadUpdate,
+        catch: (cause) => new ElectronUpdaterDownloadUpdateError({ channel, cause }),
+      });
+    }),
+    quitAndInstall: ({ isSilent, isForceRunAfter }) =>
+      Effect.try({
+        try: fork.quitAndInstall,
+        catch: (cause) =>
+          new ElectronUpdaterQuitAndInstallError({
+            channel: autoUpdater.channel,
+            isSilent,
+            isForceRunAfter,
+            cause,
+          }),
+      }),
+  });
+
+export const layer = Layer.sync(ElectronUpdater, () => {
+  const fork = ForkUpdater.fromPackagedApp();
+  return fork === undefined ? make : makeFork(fork);
+});

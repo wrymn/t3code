@@ -56,7 +56,7 @@ import { Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
-const DESKTOP_APP_ID = "com.t3tools.t3code";
+const DESKTOP_APP_ID = "com.wrymn.t3code.lukas";
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -947,6 +947,8 @@ interface StagePackageJson {
   readonly buildVersion: string;
   readonly t3codeCommitHash: string;
   readonly t3codeWebAuthn?: MacWebAuthnEntitlements;
+  // Read by apps/desktop/src/electron/ForkUpdater.ts; set by scripts/fork-update.sh.
+  readonly t3codeForkSource?: string;
   readonly private: true;
   readonly packageManager: string;
   readonly description: string;
@@ -2671,7 +2673,7 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
 
 export function resolveDesktopProductName(version: string): string {
   return resolveDesktopUpdateChannel(version) === "nightly"
-    ? "T3 Code (Nightly)"
+    ? "T3 Code Lukas (Nightly)"
     : (desktopPackageJson.productName ?? "T3 Code");
 }
 
@@ -2694,7 +2696,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   const buildConfig: Record<string, unknown> = {
     appId: DESKTOP_APP_ID,
     productName: resolveDesktopProductName(version),
-    artifactName: "T3-Code-${version}-${arch}.${ext}",
+    artifactName: "T3-Code-Lukas-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
@@ -2722,7 +2724,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     ],
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
-  if (!isDesktopPreviewVersion(version)) {
+  if (isDesktopPreviewVersion(version)) {
+    // Explicitly prevent electron-builder from inferring a feed from Git metadata.
+    buildConfig.publish = null;
+  } else {
     const publishConfig = yield* resolveGitHubPublishConfig(updateChannel);
     if (publishConfig) {
       buildConfig.publish = [publishConfig];
@@ -3733,6 +3738,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     options.platform === "win"
       ? path.join(stageAppDir, WINDOWS_SERVER_RESOURCE_SOURCE_DIR, WINDOWS_SERVER_ASAR_RESOURCE)
       : undefined;
+  const forkSource = yield* Config.String("T3CODE_FORK_SOURCE").pipe(Config.option);
   const stagePackageJson: StagePackageJson = {
     name: "t3code",
     version: appVersion,
@@ -3740,6 +3746,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     t3codeCommitHash: commitHash,
     // Read by apps/desktop/src/preview/Passkeys.ts; must match the signed entitlements.
     ...(macWebAuthn ? { t3codeWebAuthn: macWebAuthn } : {}),
+    ...(Option.isSome(forkSource) ? { t3codeForkSource: forkSource.value } : {}),
     private: true,
     packageManager: rootPackageJson.packageManager,
     description:
