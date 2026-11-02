@@ -1396,30 +1396,27 @@ function TerminalSidebarGroup({
             <div
               key={terminalId}
               className={cn(
-                "group/tab flex h-6 w-full items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
+                "group/tab flex h-6 w-full items-center rounded-md pr-1 text-xs",
                 isActive
                   ? "bg-accent text-foreground"
                   : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
               )}
             >
+              <button
+                type="button"
+                className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-1 pr-1 pl-1.5 text-left"
+                onClick={() => onActiveTerminalChange(terminalId)}
+              >
+                <TerminalSquare className="size-3 shrink-0" />
+                <span className="truncate">{terminalLabel}</span>
+              </button>
               {canOperateTerminal ? (
                 <PanelTabCloseButton
                   label={closeTerminalLabel}
                   onClick={() => onCloseTerminal(terminalId)}
                   tooltip={closeTerminalLabel}
-                >
-                  <TerminalSquare className="size-3 shrink-0" />
-                </PanelTabCloseButton>
-              ) : (
-                <TerminalSquare className="size-3 shrink-0" />
-              )}
-              <button
-                type="button"
-                className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 text-left"
-                onClick={() => onActiveTerminalChange(terminalId)}
-              >
-                <span className="truncate">{terminalLabel}</span>
-              </button>
+                />
+              ) : null}
             </div>
           );
         })}

@@ -1,31 +1,22 @@
 import { X } from "lucide-react";
-import type { ReactNode } from "react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
 interface PanelTabCloseButtonProps {
-  children: ReactNode;
   label: string;
   onClick: () => void;
   tooltip?: string;
 }
 
-export function PanelTabCloseButton({
-  children,
-  label,
-  onClick,
-  tooltip,
-}: PanelTabCloseButtonProps) {
+/** Trailing close control, revealed on `group/tab` hover or focus, and always on touch screens. */
+export function PanelTabCloseButton({ label, onClick, tooltip }: PanelTabCloseButtonProps) {
   const button = (
     <button
       type="button"
-      className="cursor-pointer group/close relative flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted"
+      className="cursor-pointer flex size-4 shrink-0 items-center justify-center rounded-sm opacity-0 hover:bg-muted focus-visible:opacity-100 pointer-coarse:opacity-100 group-hover/tab:opacity-100"
       aria-label={label}
       onClick={onClick}
     >
-      <span className="relative flex size-3 items-center justify-center group-hover/tab:hidden group-focus-visible/close:hidden">
-        {children}
-      </span>
-      <X className="hidden size-3 group-hover/tab:block group-focus-visible/close:block" />
+      <X className="size-3" />
     </button>
   );
 
