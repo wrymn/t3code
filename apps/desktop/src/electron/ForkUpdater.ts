@@ -10,13 +10,16 @@ import * as Schema from "effect/Schema";
 import { app } from "electron";
 import { autoUpdater } from "electron-updater";
 
-// Fork builds keep electron-updater for detecting upstream releases, but
-// installing upstream's artifact would drop the fork's changes. Instead the
-// update button merges the release into the fork and rebuilds it locally
-// (scripts/fork-update.sh), then swaps the app bundle on quit.
+// Upstream's artifact would drop the fork's changes, so the update button
+// rebuilds the fork locally (scripts/fork-update.sh) and swaps the bundle on
+// quit. Fork branch commits this build lacks also count as an update, built
+// at the current upstream version.
 
 const ForkPackageMetadata = Schema.fromJsonString(
-  Schema.Struct({ t3codeForkSource: Schema.optional(Schema.String) }),
+  Schema.Struct({
+    t3codeForkSource: Schema.optional(Schema.String),
+    t3codeCommitHash: Schema.optional(Schema.String),
+  }),
 );
 const decodeForkPackageMetadata = Schema.decodeUnknownOption(ForkPackageMetadata);
 
@@ -45,6 +48,7 @@ open "$current"
 export class ForkUpdateFailure extends Error {}
 
 export interface ForkUpdater {
+  readonly checkForUpdates: () => Promise<void>;
   readonly downloadUpdate: () => Promise<void>;
   readonly quitAndInstall: () => void;
 }
@@ -55,14 +59,31 @@ function emitUpdaterEvent(eventName: string, payload: object): void {
   NodeEvents.EventEmitter.prototype.emit.call(autoUpdater, eventName, payload);
 }
 
-function readForkSource(): string | undefined {
+function readForkMetadata() {
   try {
     if (!app.isPackaged) return undefined;
     const text = NodeFS.readFileSync(NodePath.join(app.getAppPath(), "package.json"), "utf8");
-    return Option.getOrUndefined(decodeForkPackageMetadata(text))?.t3codeForkSource;
+    return Option.getOrUndefined(decodeForkPackageMetadata(text));
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Whether `main` or any `fork/*` branch in the fork checkout has commits that
+ * `builtCommit` (the commit this app was built from) does not contain. An
+ * unknown commit or a git failure counts as no changes, so a broken checkout
+ * never offers a rebuild on every check.
+ */
+export function hasUnbuiltForkChanges(forkSource: string, builtCommit: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    NodeChildProcess.execFile(
+      "git",
+      ["rev-list", "-n", "1", "refs/heads/main", "--branches=fork/*", "--not", builtCommit, "--"],
+      { cwd: forkSource },
+      (error, stdout) => resolve(error === null && stdout.trim() !== ""),
+    );
+  });
 }
 
 function runForkBuild(forkSource: string, version: string): Promise<string> {
@@ -99,8 +120,10 @@ function currentAppBundle(): string | undefined {
 }
 
 export function fromPackagedApp(): ForkUpdater | undefined {
-  const forkSource = readForkSource();
+  const metadata = readForkMetadata();
+  const forkSource = metadata?.t3codeForkSource;
   if (forkSource === undefined) return undefined;
+  const builtCommit = metadata?.t3codeCommitHash;
 
   let availableVersion: string | undefined;
   let builtApp: string | undefined;
@@ -109,6 +132,13 @@ export function fromPackagedApp(): ForkUpdater | undefined {
   });
 
   return {
+    checkForUpdates: async () => {
+      const result = await autoUpdater.checkForUpdates();
+      if (result?.isUpdateAvailable || builtCommit === undefined) return;
+      if (await hasUnbuiltForkChanges(forkSource, builtCommit)) {
+        emitUpdaterEvent("update-available", { version: app.getVersion() });
+      }
+    },
     downloadUpdate: async () => {
       const version = availableVersion;
       if (version === undefined) throw new ForkUpdateFailure("No upstream update to build.");

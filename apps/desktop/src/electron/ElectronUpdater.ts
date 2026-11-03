@@ -189,6 +189,13 @@ export const make = ElectronUpdater.of({
 const makeFork = (fork: ForkUpdater.ForkUpdater) =>
   ElectronUpdater.of({
     ...make,
+    checkForUpdates: Effect.suspend(() => {
+      const channel = autoUpdater.channel;
+      return Effect.tryPromise({
+        try: fork.checkForUpdates,
+        catch: (cause) => new ElectronUpdaterCheckForUpdatesError({ channel, cause }),
+      });
+    }),
     downloadUpdate: Effect.suspend(() => {
       const channel = autoUpdater.channel;
       return Effect.tryPromise({
