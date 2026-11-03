@@ -28,6 +28,8 @@ interface DiffFileTreeProps {
   readonly onSelectFile: (path: string) => void;
   readonly selectedPath?: string | null;
   readonly revealRequestId?: number;
+  /** File paths shown at reduced opacity, such as pull request files marked viewed. */
+  readonly dimmedPaths?: ReadonlyArray<string>;
   readonly ariaLabel: string;
   readonly headerAccessory?: ReactNode;
   readonly footer?: ReactNode;
@@ -39,6 +41,7 @@ export function DiffFileTree({
   onSelectFile,
   selectedPath = null,
   revealRequestId = 0,
+  dimmedPaths = [],
   ariaLabel,
   headerAccessory,
   footer,
@@ -64,6 +67,15 @@ export function DiffFileTree({
     path: presented.modelPath(entry.path),
     status: entry.status,
   }));
+  const dimmedRowsCSS =
+    dimmedPaths.length === 0
+      ? ""
+      : `:is(${dimmedPaths
+          .map(
+            (path) =>
+              `button[data-type='item'][data-item-path="${CSS.escape(presented.modelPath(path))}"]`,
+          )
+          .join(", ")}):not(:hover, [data-item-focused]) { opacity: 0.2; }`;
   const syncingSelectionRef = useRef(false);
   const handledRevealRef = useRef<{
     path: string;
@@ -99,6 +111,16 @@ export function DiffFileTree({
   useEffect(() => {
     model.setIcons(icons);
   }, [icons, model]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Pierre fixes unsafeCSS at construction and has no per-row style hook, so dimmed rows are styled in its shadow root
+  useEffect(() => {
+    const shadowRoot = model.getFileTreeContainer()?.shadowRoot;
+    if (!shadowRoot || dimmedRowsCSS === "") return;
+    const style = document.createElement("style");
+    style.textContent = dimmedRowsCSS;
+    shadowRoot.append(style);
+    return () => style.remove();
+  }, [dimmedRowsCSS, model]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies path updates, ordering and git status to the imperative Pierre file tree model
   useEffect(() => {
