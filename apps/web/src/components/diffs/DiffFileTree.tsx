@@ -1,4 +1,4 @@
-import type { GitStatusEntry } from "@pierre/trees";
+import type { FileTreeRowDecorationContext, GitStatusEntry } from "@pierre/trees";
 import { FileTree, useFileTree, useFileTreeSelector } from "@pierre/trees/react";
 import { ChevronsDownUp, ChevronsUpDown } from "lucide";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -23,8 +23,12 @@ import {
 
 export type { DiffFileTreeEntry } from "./diffFileTree.logic";
 
+const NO_COMMENT_COUNTS: ReadonlyMap<string, number> = new Map();
+
 interface DiffFileTreeProps {
   readonly entries: ReadonlyArray<DiffFileTreeEntry>;
+  /** Comment totals keyed by entry path; files with a positive total show a comment bubble. */
+  readonly commentCounts?: ReadonlyMap<string, number>;
   readonly onSelectFile: (path: string) => void;
   readonly selectedPath?: string | null;
   readonly revealRequestId?: number;
@@ -36,6 +40,7 @@ interface DiffFileTreeProps {
 
 export function DiffFileTree({
   entries,
+  commentCounts = NO_COMMENT_COUNTS,
   onSelectFile,
   selectedPath = null,
   revealRequestId = 0,
@@ -80,6 +85,13 @@ export function DiffFileTree({
     }
   });
 
+  const renderRowDecoration = useStableCallback(({ item }: FileTreeRowDecorationContext) => {
+    if (item.kind !== "file") return null;
+    const count = commentCounts.get(presented.selectionPath(item.path)) ?? 0;
+    if (count === 0) return null;
+    return { icon: "t3-tree-icon-comment", title: count === 1 ? "1 comment" : `${count} comments` };
+  });
+
   const { model } = useFileTree({
     density: "compact",
     flattenEmptyDirectories: true,
@@ -87,6 +99,7 @@ export function DiffFileTree({
     icons,
     onSelectionChange: handleSelectionChange,
     paths: [],
+    renderRowDecoration,
     search: false,
     sort: ordering.sort,
     unsafeCSS: PIERRE_TREE_UNSAFE_CSS,
@@ -99,6 +112,14 @@ export function DiffFileTree({
   useEffect(() => {
     model.setIcons(icons);
   }, [icons, model]);
+
+  const renderedCommentCountsRef = useRef(commentCounts);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- makes the Pierre tree model re-render row decorations when comment counts change
+  useEffect(() => {
+    if (renderedCommentCountsRef.current === commentCounts) return;
+    renderedCommentCountsRef.current = commentCounts;
+    model.setComposition(model.getComposition());
+  }, [commentCounts, model]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies path updates, ordering and git status to the imperative Pierre file tree model
   useEffect(() => {
