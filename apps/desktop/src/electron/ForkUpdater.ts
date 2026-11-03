@@ -23,23 +23,29 @@ const ForkPackageMetadata = Schema.fromJsonString(
 );
 const decodeForkPackageMetadata = Schema.decodeUnknownOption(ForkPackageMetadata);
 
-// Stages the new bundle beside the current one so the swap itself is two
-// renames, and reopens whichever app ends up in place. The log sits next to
-// the built app in the release worktree.
-const SWAP_APP_SCRIPT = `
+// Stages the new bundle beside the current one so the swap is two renames, then
+// reopens whichever app is in place; the log sits next to the built app. One helper
+// (a symlink naming its PID) owns a bundle: a second would delete the first's
+// staging and backup, and mv would nest bundles inside the one just placed.
+export const SWAP_APP_SCRIPT = `
 pid=$1 next=$2 current=$3
 exec >>"$(dirname "$next")/install.log" 2>&1
-staged="$current.next" previous="$current.previous"
+owner="$current.installing" staged="$current.next" previous="$current.previous"
+if ! ln -s "$$" "$owner" 2>/dev/null; then
+  if kill -0 "$(readlink "$owner")" 2>/dev/null; then
+    echo "install $(readlink "$owner") already owns $current"
+    exit 1
+  fi
+  rm -f "$owner"
+  ln -s "$$" "$owner" || exit 1
+fi
+trap 'rm -f "$owner"' EXIT
+[ -e "$current" ] || [ ! -e "$previous" ] || mv "$previous" "$current"
 rm -rf "$staged" "$previous"
 ditto "$next" "$staged" && staged_ok=1 || echo "staging $next failed"
 while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done
 if [ -n "\${staged_ok:-}" ] && mv "$current" "$previous"; then
-  if mv "$staged" "$current"; then
-    if open "$current"; then rm -rf "$previous"; exit 0; fi
-    echo "opening the new app failed, restoring the previous one"
-    rm -rf "$current"
-  fi
-  mv "$previous" "$current"
+  if mv "$staged" "$current"; then rm -rf "$previous"; else mv "$previous" "$current"; fi
 fi
 rm -rf "$staged"
 open "$current"
