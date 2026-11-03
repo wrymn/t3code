@@ -87,6 +87,7 @@ export function DiffFileTree({
     revealRequestId: number;
   } | null>(null);
   const mountedPresentationRef = useRef<ReturnType<typeof diffFileTreeModel> | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   // The tree model keeps the first selection handler it was given.
   const handleSelectionChange = useStableCallback((selectedPaths: ReadonlyArray<string>) => {
@@ -134,13 +135,14 @@ export function DiffFileTree({
   }, [commentCounts, model]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Pierre fixes unsafeCSS at construction and has no per-row style hook, so dimmed rows are styled in its shadow root
   useEffect(() => {
-    const shadowRoot = model.getFileTreeContainer()?.shadowRoot;
+    // The host attaches its shadow root on insertion, but the model only learns the host a commit later.
+    const shadowRoot = rootRef.current?.querySelector("file-tree-container")?.shadowRoot;
     if (!shadowRoot || dimmedRowsCSS === "") return;
     const style = document.createElement("style");
     style.textContent = dimmedRowsCSS;
     shadowRoot.append(style);
     return () => style.remove();
-  }, [dimmedRowsCSS, model]);
+  }, [dimmedRowsCSS]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies path updates, ordering and git status to the imperative Pierre file tree model
   useEffect(() => {
@@ -223,7 +225,7 @@ export function DiffFileTree({
   }, [model, presented, revealRequestId, selectedPath]);
 
   return (
-    <div className={cn("flex min-h-0 flex-1 flex-col bg-background", className)}>
+    <div ref={rootRef} className={cn("flex min-h-0 flex-1 flex-col bg-background", className)}>
       <div
         className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 text-xs text-muted-foreground in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
         data-surface-subheader
