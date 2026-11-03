@@ -1536,6 +1536,9 @@ function PullRequestCodeTab({
               ariaLabel={`${capitalizeTerm(term)} #${detail.number} files`}
               entries={fileTreeEntries}
               commentCounts={fileTreeCommentCounts}
+              dimmedPaths={fileTreeEntries.flatMap((entry) =>
+                isFileViewed(entry.path) ? [entry.path] : [],
+              )}
               onSelectFile={revealFile}
               footer={
                 nextCursor === null ? null : (
