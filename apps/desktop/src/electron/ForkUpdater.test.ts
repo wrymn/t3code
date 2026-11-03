@@ -137,3 +137,19 @@ it("restores a backup an interrupted swap left behind before installing", async 
     NodeFS.rmSync(fixture.dir, { recursive: true, force: true });
   }
 });
+
+it("leaves a stale ownership marker and the installed bundle untouched", async () => {
+  const fixture = makeSwapFixture();
+  try {
+    fixture.bundle(fixture.current, "old");
+    const exitedApp = NodeChildProcess.spawn("/bin/sh", ["-c", "exit 0"]);
+    await exitCode(exitedApp);
+    NodeFS.symlinkSync(String(exitedApp.pid), `${fixture.current}.installing`);
+    await expect(exitCode(fixture.swap(exitedApp.pid!))).resolves.toBe(1);
+    expect(fixture.marker()).toBe("old");
+    expect(NodeFS.readlinkSync(`${fixture.current}.installing`)).toBe(String(exitedApp.pid));
+    expect(fixture.applicationsEntries()).toEqual(["App.app", "App.app.installing"]);
+  } finally {
+    NodeFS.rmSync(fixture.dir, { recursive: true, force: true });
+  }
+});

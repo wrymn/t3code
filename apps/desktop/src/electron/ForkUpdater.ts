@@ -32,12 +32,8 @@ pid=$1 next=$2 current=$3
 exec >>"$(dirname "$next")/install.log" 2>&1
 owner="$current.installing" staged="$current.next" previous="$current.previous"
 if ! ln -s "$$" "$owner" 2>/dev/null; then
-  if kill -0 "$(readlink "$owner")" 2>/dev/null; then
-    echo "install $(readlink "$owner") already owns $current"
-    exit 1
-  fi
-  rm -f "$owner"
-  ln -s "$$" "$owner" || exit 1
+  echo "installation marker already exists for $current; leave it untouched"
+  exit 1
 fi
 trap 'rm -f "$owner"' EXIT
 [ -e "$current" ] || [ ! -e "$previous" ] || mv "$previous" "$current"
