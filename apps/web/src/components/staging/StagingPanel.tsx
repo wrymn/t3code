@@ -153,12 +153,26 @@ export function StagingPanel(props: {
       : vcsEnvironment.stagingStatus({ environmentId, input: { cwd } }),
   );
   const staging = stagingQuery.data;
+  // Moved files leave their list right away; waiting for the refetch would put the
+  // successor's highlight on the row below for a few frames.
+  const [moved, setMoved] = useState<{
+    readonly list: StagingListKind;
+    readonly paths: ReadonlySet<string>;
+    readonly staging: typeof staging;
+  } | null>(null);
+  const isMovedAway = (list: StagingListKind, file: VcsStagingFile) =>
+    moved !== null &&
+    moved.staging === staging &&
+    moved.list === list &&
+    moved.paths.has(file.path);
   const query = filter?.trim().toLowerCase() ?? "";
   const matches = (file: VcsStagingFile) => query === "" || file.path.toLowerCase().includes(query);
   // Everything that acts on rows, including folder moves and select-all, sees only matches.
   const lists: Record<StagingListKind, ReadonlyArray<VcsStagingFile>> = {
-    unstaged: (staging?.unstaged ?? []).filter(matches),
-    staged: (staging?.staged ?? []).filter(matches),
+    unstaged: (staging?.unstaged ?? []).filter(
+      (file) => matches(file) && !isMovedAway("unstaged", file),
+    ),
+    staged: (staging?.staged ?? []).filter((file) => matches(file) && !isMovedAway("staged", file)),
   };
   const rows: Record<StagingListKind, ReadonlyArray<StagingRow>> = {
     unstaged: stagingRows(lists.unstaged, view, collapsed.unstaged),
@@ -236,7 +250,10 @@ export function StagingPanel(props: {
       });
       return;
     }
-    setSelection(next ? { list: from, anchor: next, keys: new Set([next]) } : null);
+    flushSync(() => {
+      setMoved({ list: from, paths: movedPaths, staging });
+      setSelection(next ? { list: from, anchor: next, keys: new Set([next]) } : null);
+    });
     if (next) document.getElementById(rowId(from, next))?.focus();
   };
 

@@ -102,7 +102,11 @@ function setup(overrides: Partial<VcsStagingStatusResult> = {}) {
     ...overrides,
   };
   for (const command of [state.stage, state.unstage, state.discard]) {
-    command.mockReset().mockResolvedValue(SUCCESS);
+    // A new status object stands for the refetch every index write triggers.
+    command.mockReset().mockImplementation(async () => {
+      state.staging = { ...state.staging };
+      return SUCCESS;
+    });
   }
   state.commit
     .mockReset()
@@ -146,8 +150,12 @@ async function clickMenuItem(name: string) {
 it("stages and unstages by double-click, keyboard, and folder drag", async () => {
   await using _screen = await setup();
 
+  // Before the refetch lands, the moved row is already gone and its successor selected.
+  state.stage.mockResolvedValueOnce(SUCCESS);
   await userEvent.dblClick(row("unstaged", "app/notes.md"));
   expect(state.stage).toHaveBeenCalledWith(pathsInput(["app/notes.md"]));
+  await vi.waitFor(() => expect(row("unstaged", "app/notes.md")).toBeNull());
+  expect(selectedKeys("unstaged")).toEqual(["README.md"]);
 
   // A rename moves two index entries.
   await userEvent.dblClick(row("staged", "app/lib/new.ts"));
