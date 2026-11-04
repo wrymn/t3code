@@ -594,6 +594,7 @@ export function StagingPanel(props: {
         <header className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 px-2 text-xs text-muted-foreground">
           {isUnstaged ? filterToggle : null}
           <span className="flex-1" />
+          {isUnstaged ? viewToggle : null}
           <Button
             size="compact"
             variant="outline"
@@ -602,7 +603,6 @@ export function StagingPanel(props: {
           >
             {isUnstaged ? "Stage" : "Unstage"}
           </Button>
-          {isUnstaged ? viewToggle : null}
         </header>
         {isUnstaged ? filterStrip : null}
         <div role="listbox" aria-multiselectable className="min-h-0 flex-1 overflow-y-auto p-1.5">
