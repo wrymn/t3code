@@ -31,6 +31,8 @@ import {
   type VcsListRefsResult,
   type VcsPullResult,
   type VcsRemoveWorktreeInput,
+  type VcsStagingPathsInput,
+  type VcsStagingStatusResult,
   type VcsStatusInput,
   type VcsStatusResult,
   type WorktreeSubmodules,
@@ -80,6 +82,7 @@ export interface GitStatusDetails {
   upstreamRef: string | null;
   hasWorkingTreeChanges: boolean;
   workingTree: VcsStatusResult["workingTree"];
+  indexRevision?: string;
   branchChanges?: VcsStatusResult["branchChanges"];
   hasUpstream: boolean;
   aheadCount: number;
@@ -107,7 +110,12 @@ export interface GitRemoteStatusDetails {
 export interface GitPreparedCommitContext {
   stagedSummary: string;
   stagedPatch: string;
+  /** Tree of the index the context describes; set when committing the index as staged. */
+  indexTree?: string;
 }
+
+/** Omitted stages every change, paths stage only those, and "staged" commits the index as is. */
+export type GitCommitSelection = readonly string[] | "staged";
 
 export interface ExecuteGitProgress {
   readonly onStdoutLine?: (line: string) => Effect.Effect<void, never>;
@@ -163,6 +171,8 @@ export interface GitCommitOptions {
   readonly timeoutMs?: number;
   readonly progress?: GitCommitProgress;
   readonly stage?: { readonly filePaths?: readonly string[] };
+  /** Refuses the commit when the index no longer matches the tree its message describes. */
+  readonly expectedIndexTree?: string;
 }
 
 export interface GitDeleteLocalBranchInput {
@@ -317,7 +327,7 @@ export class GitVcsDriver extends Context.Service<
     ) => Effect.Effect<GitRemoteStatusDetails, GitCommandError>;
     readonly prepareCommitContext: (
       cwd: string,
-      filePaths?: readonly string[],
+      selection?: GitCommitSelection,
       options?: { readonly includePatch?: boolean },
     ) => Effect.Effect<GitPreparedCommitContext | null, GitCommandError>;
     readonly commit: (
@@ -344,6 +354,11 @@ export class GitVcsDriver extends Context.Service<
     readonly getReviewDiffFileContents: (
       input: ReviewDiffFileContentsInput,
     ) => Effect.Effect<ReviewDiffFileContentsResult, GitCommandError>;
+    readonly getStagingStatus: (
+      cwd: string,
+    ) => Effect.Effect<VcsStagingStatusResult, GitCommandError>;
+    readonly stagePaths: (input: VcsStagingPathsInput) => Effect.Effect<void, GitCommandError>;
+    readonly unstagePaths: (input: VcsStagingPathsInput) => Effect.Effect<void, GitCommandError>;
     readonly readConfigValue: (
       cwd: string,
       key: string,

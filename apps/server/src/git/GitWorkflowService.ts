@@ -27,6 +27,9 @@ import {
   type VcsStatusLocalResult,
   type VcsStatusRemoteResult,
   type VcsStatusResult,
+  type VcsStagingPathsInput,
+  type VcsStagingStatusInput,
+  type VcsStagingStatusResult,
 } from "@t3tools/contracts";
 
 import * as GitManager from "./GitManager.ts";
@@ -74,6 +77,11 @@ export class GitWorkflowService extends Context.Service<
     readonly listRefs: (
       input: VcsListRefsInput,
     ) => Effect.Effect<VcsListRefsResult, GitCommandError>;
+    readonly getStagingStatus: (
+      input: VcsStagingStatusInput,
+    ) => Effect.Effect<VcsStagingStatusResult, GitCommandError>;
+    readonly stagePaths: (input: VcsStagingPathsInput) => Effect.Effect<void, GitCommandError>;
+    readonly unstagePaths: (input: VcsStagingPathsInput) => Effect.Effect<void, GitCommandError>;
     readonly createWorktree: (
       input: VcsCreateWorktreeInput,
       options?: GitVcsDriver.CreateWorktreeOptions,
@@ -456,6 +464,21 @@ export const make = Effect.gen(function* () {
         );
       },
     ),
+    getStagingStatus: Effect.fn("GitWorkflowService.getStagingStatus")(function (input) {
+      return ensureGitCommand("GitWorkflowService.getStagingStatus", input.cwd).pipe(
+        Effect.andThen(git.getStagingStatus(input.cwd)),
+      );
+    }),
+    stagePaths: Effect.fn("GitWorkflowService.stagePaths")(function (input) {
+      return ensureGitCommand("GitWorkflowService.stagePaths", input.cwd).pipe(
+        Effect.andThen(git.stagePaths(input)),
+      );
+    }),
+    unstagePaths: Effect.fn("GitWorkflowService.unstagePaths")(function (input) {
+      return ensureGitCommand("GitWorkflowService.unstagePaths", input.cwd).pipe(
+        Effect.andThen(git.unstagePaths(input)),
+      );
+    }),
     removeWorktree: Effect.fn("GitWorkflowService.removeWorktree")(function (input) {
       return ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd).pipe(
         Effect.andThen(git.removeWorktree(input)),

@@ -138,6 +138,11 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     onDiffPanelOpen?.();
   };
   const addDiffSurfaceStable = useStableCallback(addDiffSurface);
+  const addStagingSurface = () => {
+    if (!activeThreadRef || !isServerThread || !isGitRepo) return;
+    useRightPanelStore.getState().open(activeThreadRef, "staging");
+  };
+  const addStagingSurfaceStable = useStableCallback(addStagingSurface);
   const openChangesFromThreadPanel = () => {
     addDiffSurface();
   };
@@ -338,6 +343,10 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       if (!event.repeat) closeRightPanelSurface(activeRightPanelSurface);
     },
     "diff.toggle": () => onToggleDiff(),
+    "staging.toggle": () => {
+      if (!activeThreadRef || !isServerThread || !isGitRepo) return;
+      useRightPanelStore.getState().toggle(activeThreadRef, "staging");
+    },
   } satisfies ChatShortcutCommands;
 
   return {
@@ -345,6 +354,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     activateRightPanelSurfaceStable,
     addDeviceSurfaceStable,
     addDiffSurfaceStable,
+    addStagingSurfaceStable,
     addFilesSurfaceStable,
     addPullRequestSurfaceStable,
     addPullRequestsSurfaceStable,

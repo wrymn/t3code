@@ -2341,6 +2341,7 @@ export default function ChatView(props: ChatViewProps) {
     activateRightPanelSurfaceStable,
     addDeviceSurfaceStable,
     addDiffSurfaceStable,
+    addStagingSurfaceStable,
     addFilesSurfaceStable,
     addPullRequestSurfaceStable,
     addPullRequestsSurfaceStable,
@@ -3193,6 +3194,7 @@ export default function ChatView(props: ChatViewProps) {
       activeSurfaceId={activeRightPanelSurface?.id ?? null}
       threadRef={activeThreadRef}
       environmentId={activeThread.environmentId}
+      gitCwd={gitCwd}
       visible={rightPanelOpen}
       composerDraftTarget={composerDraftTarget}
       keybindings={keybindings}
@@ -3983,6 +3985,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddBrowserInProfile={createBrowserSurfaceStable}
           onAddTerminal={addTerminalSurfaceStable}
           onAddDiff={addDiffSurfaceStable}
+          onAddStaging={addStagingSurfaceStable}
           onAddFiles={addFilesSurfaceStable}
           onAddPullRequest={addPullRequestSurfaceStable}
           onAddPullRequests={addPullRequestsSurfaceStable}

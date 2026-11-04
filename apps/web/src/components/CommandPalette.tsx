@@ -61,6 +61,7 @@ import {
   CornerLeftUpIcon,
   FileSearchIcon,
   FolderGit2Icon,
+  GitCommitVerticalIcon,
   FolderIcon,
   FolderPlusIcon,
   MessageSquareDashedIcon,
@@ -76,6 +77,7 @@ import {
   TextSearchIcon,
   UserPlusIcon,
 } from "lucide-react";
+import { recallCheckoutIsRepo } from "./ChatView.logic";
 import { openThreadFind } from "./chat/threadFindStore";
 import {
   useDeferredValue,
@@ -1398,6 +1400,32 @@ function OpenCommandPaletteDialog(props: {
       icon: <PullRequestGlyph.link className={ITEM_ICON_CLASS} />,
       run: async () => {
         useRightPanelStore.getState().open(threadRef, "pull-requests");
+      },
+    });
+  }
+
+  const activeThreadProject = activeThread
+    ? projectByKey.get(`${activeThread.environmentId}:${activeThread.projectId}`)
+    : undefined;
+  if (
+    activeThread !== null &&
+    activeThreadProject !== undefined &&
+    // Same answer the panel's tab menu uses; unknown counts as a repository.
+    recallCheckoutIsRepo(
+      activeThread.environmentId,
+      activeThread.worktreePath ?? activeThreadProject.workspaceRoot,
+    ) !== false
+  ) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:open-staging",
+      searchTerms: ["staging", "stage", "unstage", "commit", "git", "index"],
+      title: "Open staging",
+      icon: <GitCommitVerticalIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "staging.toggle",
+      run: async () => {
+        useRightPanelStore.getState().open(threadRef, "staging");
       },
     });
   }

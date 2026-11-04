@@ -573,6 +573,7 @@ function runStackedAction(
     commitMessage?: string;
     featureBranch?: boolean;
     filePaths?: readonly string[];
+    stagedOnly?: boolean;
   },
   options?: Parameters<GitManager.GitManager["Service"]["runStackedAction"]>[1],
 ) {
@@ -3156,6 +3157,70 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       );
       expect(statusStdout).toContain("b.txt");
       expect(statusStdout).not.toContain("a.txt");
+    }),
+  );
+
+  it.effect("commits only the staged index when stagedOnly is set", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "a.txt"), "file a\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "b.txt"), "file b\n");
+      yield* runGit(repoDir, ["add", "a.txt"]);
+      let stagedSummary = "";
+
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitMessage: (input) =>
+            Effect.sync(() => {
+              stagedSummary = input.stagedSummary;
+              return { subject: "Add a", body: "" };
+            }),
+        },
+      });
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        stagedOnly: true,
+      });
+
+      expect(result.commit.status).toBe("created");
+      expect(stagedSummary).toContain("a.txt");
+      expect(stagedSummary).not.toContain("b.txt");
+      const committed = yield* runGit(repoDir, ["show", "--pretty=", "--name-only", "HEAD"]);
+      expect(committed.stdout.trim()).toBe("a.txt");
+      expect((yield* runGit(repoDir, ["status", "--porcelain"])).stdout).toContain("?? b.txt");
+    }),
+  );
+
+  it.effect("refuses a stagedOnly commit when staging changed during generation", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "a.txt"), "file a\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "b.txt"), "file b\n");
+      yield* runGit(repoDir, ["add", "a.txt"]);
+      const headBefore = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout;
+      const gitDriver = yield* GitVcsDriver.GitVcsDriver;
+
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitMessage: () =>
+            runGit(repoDir, ["add", "b.txt"]).pipe(
+              Effect.provideService(GitVcsDriver.GitVcsDriver, gitDriver),
+              Effect.orDie,
+              Effect.as({ subject: "Add a", body: "" }),
+            ),
+        },
+      });
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        stagedOnly: true,
+      }).pipe(Effect.result);
+
+      expect(Result.isFailure(result)).toBe(true);
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout).toBe(headBefore);
     }),
   );
 

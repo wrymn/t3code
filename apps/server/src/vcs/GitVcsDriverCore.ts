@@ -32,6 +32,8 @@ import {
   type ReviewDiffFileStat,
   type ReviewDiffPreviewSource,
   type VcsRef,
+  type VcsStagingChange,
+  type VcsStagingFile,
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -75,6 +77,7 @@ const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
 const REVIEW_METADATA_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 // Temporary-index git add scales poorly (50k files took ~30 s); report incomplete totals above this cap.
 const REVIEW_UNTRACKED_MAX_FILES = 5_000;
+const STAGING_MAX_FILES = 5_000;
 const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 const REVIEW_BRANCH_COMMIT_LIMIT = 100;
 const REVIEW_BRANCH_SUBJECT_LIMIT = 300;
@@ -240,6 +243,69 @@ function parsePorcelainPath(record: string): string | null {
   if (fieldsBeforePath === undefined) return null;
   const filePath = record.split(" ").slice(fieldsBeforePath).join(" ");
   return filePath.length > 0 ? filePath : null;
+}
+
+const STAGING_CHANGE_BY_CODE: Record<string, VcsStagingChange> = {
+  A: "added",
+  M: "modified",
+  D: "deleted",
+  R: "renamed",
+  C: "copied",
+  T: "type-changed",
+};
+
+/** Splits `git status --porcelain=2 -z` records into index (X) and working-tree (Y) entries. */
+/** Caps each list on its own, so a flood of unstaged files cannot hide staged ones. */
+export function parseStagingStatus(records: ReadonlyArray<string>, maxFilesPerList: number) {
+  const staged: VcsStagingFile[] = [];
+  const unstaged: VcsStagingFile[] = [];
+  let truncated = false;
+  const push = (list: VcsStagingFile[], file: VcsStagingFile) => {
+    if (list.length >= maxFilesPerList) truncated = true;
+    else list.push(file);
+  };
+  for (let index = 0; index < records.length; index++) {
+    const record = records[index]!;
+    const filePath = record.startsWith("! ") ? null : parsePorcelainPath(record);
+    if (filePath === null) continue;
+    const originalPath = record.startsWith("2 ") ? (records[++index] ?? null) : null;
+    if (record.startsWith("? ")) {
+      push(unstaged, { path: filePath, previousPath: null, change: "untracked" });
+      continue;
+    }
+    if (record.startsWith("u ")) {
+      push(unstaged, { path: filePath, previousPath: null, change: "conflicted" });
+      continue;
+    }
+    const indexChange = STAGING_CHANGE_BY_CODE[record[2] ?? ""];
+    const worktreeChange = STAGING_CHANGE_BY_CODE[record[3] ?? ""];
+    const previousPathFor = (change: VcsStagingChange) =>
+      change === "renamed" || change === "copied" ? originalPath : null;
+    if (indexChange) {
+      push(staged, {
+        path: filePath,
+        previousPath: previousPathFor(indexChange),
+        change: indexChange,
+      });
+    }
+    if (worktreeChange) {
+      push(unstaged, {
+        path: filePath,
+        previousPath: previousPathFor(worktreeChange),
+        change: worktreeChange,
+      });
+    }
+  }
+  return { staged, unstaged, truncated };
+}
+
+function fnv1aHex(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index++) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
 function filterBranchesForListQuery(
@@ -2258,6 +2324,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     let hasWorkingTreeChanges = false;
     const changedFilesWithoutNumstat = new Set<string>();
     const untrackedRoots: string[] = [];
+    let indexSignature = "";
 
     const statusRecords = statusStdout.split("\0");
     for (let index = 0; index < statusRecords.length; index++) {
@@ -2281,6 +2348,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
       if (line.length > 0 && !line.startsWith("#")) {
         hasWorkingTreeChanges = true;
+        // Records carry index object ids and XY codes, so staging changes this signature.
+        indexSignature += `${line}\0`;
         const pathValue = parsePorcelainPath(line);
         if (pathValue) {
           changedFilesWithoutNumstat.add(pathValue);
@@ -2361,6 +2430,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         insertions,
         deletions,
       },
+      indexRevision: fnv1aHex(indexSignature),
       ...(branchChanges ? { branchChanges } : {}),
       hasUpstream: upstreamRef !== null,
       aheadCount,
@@ -2489,8 +2559,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
   });
 
+  const writeIndexTree = Effect.fn("GitVcsDriver.writeIndexTree")(function* (
+    cwd: string,
+    env?: NodeJS.ProcessEnv,
+  ) {
+    const result = yield* executeGit("GitVcsDriver.writeIndexTree", cwd, ["write-tree"], {
+      env,
+      fallbackErrorDetail: "Resolve merge conflicts in the staged files before committing.",
+    });
+    return result.stdout.trim();
+  });
+
   const prepareCommitContext: GitVcsDriver.GitVcsDriver["Service"]["prepareCommitContext"] =
-    Effect.fn("prepareCommitContext")(function* (cwd, filePaths, options) {
+    Effect.fn("prepareCommitContext")(function* (cwd, selection, options) {
       return yield* Effect.scoped(
         Effect.gen(function* () {
           const indexValue = yield* runGitStdout(
@@ -2531,7 +2612,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               { env },
             );
           }
-          yield* stageCommitChanges(cwd, filePaths, env);
+          const indexTree = selection === "staged" ? yield* writeIndexTree(cwd, env) : undefined;
+          if (selection !== "staged") yield* stageCommitChanges(cwd, selection, env);
 
           const stagedSummary = yield* runGitStdoutWithOptions(
             "GitVcsDriver.prepareCommitContext.stagedSummary",
@@ -2544,8 +2626,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             return null;
           }
 
+          const tree = indexTree === undefined ? {} : { indexTree };
           // A user-supplied message needs change detection, but no patch for generation.
-          if (options?.includePatch === false) return { stagedSummary, stagedPatch: "" };
+          if (options?.includePatch === false) return { stagedSummary, stagedPatch: "", ...tree };
 
           const stagedPatch = yield* runGitStdoutWithOptions(
             "GitVcsDriver.prepareCommitContext.stagedPatch",
@@ -2571,6 +2654,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           return {
             stagedSummary,
             stagedPatch,
+            ...tree,
           };
         }),
       ).pipe(
@@ -2595,6 +2679,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   ) {
     if (options?.stage !== undefined) {
       yield* stageCommitChanges(cwd, options.stage.filePaths);
+    }
+    if (
+      options?.expectedIndexTree !== undefined &&
+      (yield* writeIndexTree(cwd)) !== options.expectedIndexTree
+    ) {
+      return yield* new GitCommandError({
+        ...gitCommandContext({
+          operation: "GitVcsDriver.commit.indexChanged",
+          cwd,
+          args: ["commit"],
+        }),
+        detail: "Staged changes changed while the commit message was generated. Commit again.",
+      });
     }
     const args = ["commit", "-m", subject];
     const trimmedBody = body.trim();
@@ -3743,6 +3840,24 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (repositoryRoot.length === 0) {
       return yield* reviewDiffFileError(input, "Could not resolve the Git repository root.");
     }
+    if (input.sourceKind === "staged" || input.sourceKind === "unstaged") {
+      const staged = input.sourceKind === "staged";
+      // An empty revision reads the index, as `git show :path` does.
+      const [oldContents, newContents] = yield* Effect.all(
+        [
+          input.changeType === "new"
+            ? Effect.succeed("")
+            : readReviewFileAtRevision(input, staged ? "HEAD" : "", input.oldPath),
+          input.changeType === "deleted"
+            ? Effect.succeed("")
+            : staged
+              ? readReviewFileAtRevision(input, "", input.newPath)
+              : readWorkingTreeReviewFile(input, repositoryRoot),
+        ],
+        { concurrency: 2 },
+      );
+      return { oldContents, newContents };
+    }
     if (input.sourceKind === "commit") {
       if (!input.headRef) {
         return yield* reviewDiffFileError(input, "Selected commit is no longer available.");
@@ -3783,6 +3898,57 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       { concurrency: 2 },
     );
     return { oldContents, newContents };
+  });
+
+  const getStagingStatus: GitVcsDriver.GitVcsDriver["Service"]["getStagingStatus"] = Effect.fn(
+    "getStagingStatus",
+  )(function* (cwd) {
+    const result = yield* executeGit(
+      "GitVcsDriver.getStagingStatus",
+      cwd,
+      ["status", "--porcelain=2", "-z", "--untracked-files=all"],
+      { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
+    );
+    const records = result.stdout.split("\0");
+    // A cut-off final record is incomplete.
+    if (result.stdoutTruncated) records.pop();
+    const status = parseStagingStatus(records, STAGING_MAX_FILES);
+    return { ...status, truncated: status.truncated || result.stdoutTruncated };
+  });
+
+  // Status paths are repository-relative while cwd can be a subdirectory, and a literal
+  // pathspec keeps names with glob characters from matching other files.
+  const stagingPathspecArgs = (paths: ReadonlyArray<string>) => ({
+    args: ["--pathspec-from-file=-", "--pathspec-file-nul"],
+    stdin: paths.map((filePath) => `:(top,literal)${filePath}`).join("\0"),
+  });
+
+  const stagePaths: GitVcsDriver.GitVcsDriver["Service"]["stagePaths"] = Effect.fn("stagePaths")(
+    function* (input) {
+      const pathspec = stagingPathspecArgs(input.paths);
+      yield* executeGit("GitVcsDriver.stagePaths", input.cwd, ["add", "-A", ...pathspec.args], {
+        stdin: pathspec.stdin,
+      });
+    },
+  );
+
+  const unstagePaths: GitVcsDriver.GitVcsDriver["Service"]["unstagePaths"] = Effect.fn(
+    "unstagePaths",
+  )(function* (input) {
+    const pathspec = stagingPathspecArgs(input.paths);
+    const head = yield* executeGit(
+      "GitVcsDriver.unstagePaths.head",
+      input.cwd,
+      ["rev-parse", "--verify", "--quiet", "HEAD"],
+      { allowNonZeroExit: true },
+    );
+    // Without a commit there is nothing to restore from; --cached keeps the working tree, and
+    // --force allows files edited again after staging.
+    const args =
+      head.exitCode === 0
+        ? ["restore", "--staged", ...pathspec.args]
+        : ["rm", "--cached", "-r", "--force", "--quiet", ...pathspec.args];
+    yield* executeGit("GitVcsDriver.unstagePaths", input.cwd, args, { stdin: pathspec.stdin });
   });
 
   const readConfigValue: GitVcsDriver.GitVcsDriver["Service"]["readConfigValue"] = (cwd, key) =>
@@ -5079,6 +5245,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     getReviewBranchCommits,
     getReviewDiffPreview,
     getReviewDiffFileContents,
+    getStagingStatus,
+    stagePaths,
+    unstagePaths,
     readConfigValue,
     readBranchBase,
     resolveBranchName,

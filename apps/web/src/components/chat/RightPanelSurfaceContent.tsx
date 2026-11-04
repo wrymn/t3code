@@ -29,6 +29,9 @@ const PreviewPanel = lazy(() =>
   import("../preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
 );
 const DiffPanel = lazy(() => import("../DiffPanel"));
+const StagingPanel = lazy(() =>
+  import("../staging/StagingPanel").then((module) => ({ default: module.StagingPanel })),
+);
 const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
@@ -63,6 +66,7 @@ export function RightPanelSurfaceContent(props: {
   readonly activeSurfaceId: string | null;
   readonly threadRef: ScopedThreadRef;
   readonly environmentId: EnvironmentId;
+  readonly gitCwd: string | null;
   readonly visible: boolean;
   readonly composerDraftTarget: ScopedThreadRef | DraftId;
   readonly keybindings: ResolvedKeybindingsConfig;
@@ -168,6 +172,12 @@ export function RightPanelSurfaceContent(props: {
     }
     case "pull-requests":
       return <ThreadPullRequestsPanel threadRef={threadRef} />;
+    case "staging":
+      return (
+        <Suspense fallback={null}>
+          <StagingPanel environmentId={props.environmentId} cwd={props.gitCwd} visible={visible} />
+        </Suspense>
+      );
     case "side-chat":
       // Not lazy: revealing a suspended tiptap editor tears down its view and crashes the composer.
       return (

@@ -38,6 +38,7 @@ import * as ServerConfig from "../config.ts";
 import {
   makeGitVcsDriverCore,
   parseGitCheckoutProgressLine,
+  parseStagingStatus,
   splitNullSeparatedGitStdoutPaths,
   windowsLongPathConfigEnv,
 } from "./GitVcsDriverCore.ts";
@@ -5824,6 +5825,181 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
         const status = yield* git(cwd, ["status", "--porcelain"]);
         assert.include(status, "?? selected1.txt");
+      }),
+    );
+
+    it.effect("commits the index as staged, with context limited to the staged version", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(cwd, "a.txt", "staged version\n");
+        yield* writeTextFile(cwd, "b.txt", "unstaged\n");
+        yield* driver.stagePaths({ cwd, paths: ["a.txt"] });
+        yield* writeTextFile(cwd, "a.txt", "later edit\n");
+
+        const context = yield* driver.prepareCommitContext(cwd, "staged");
+        assert.include(context?.stagedSummary ?? "", "a.txt");
+        assert.notInclude(context?.stagedSummary ?? "", "b.txt");
+        assert.include(context?.stagedPatch ?? "", "+staged version");
+        assert.notInclude(context?.stagedPatch ?? "", "later edit");
+
+        const indexTree = context?.indexTree;
+        assert.isDefined(indexTree);
+        yield* driver.commit(cwd, "Add a", "", { expectedIndexTree: indexTree });
+        assert.equal(yield* git(cwd, ["show", "HEAD:a.txt"]), "staged version");
+        assert.equal(yield* git(cwd, ["diff", "--name-only"]), "a.txt");
+        assert.equal(yield* git(cwd, ["diff", "--cached", "--name-only"]), "");
+        assert.include(yield* git(cwd, ["status", "--porcelain"]), "?? b.txt");
+      }),
+    );
+
+    it.effect("refuses a staged commit when the index changed after its message was prepared", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(cwd, "a.txt", "a\n");
+        yield* writeTextFile(cwd, "b.txt", "b\n");
+        yield* driver.stagePaths({ cwd, paths: ["a.txt"] });
+        const context = yield* driver.prepareCommitContext(cwd, "staged");
+        yield* driver.stagePaths({ cwd, paths: ["b.txt"] });
+        const indexTree = context?.indexTree;
+        assert.isDefined(indexTree);
+
+        const error = yield* driver
+          .commit(cwd, "Add a", "", { expectedIndexTree: indexTree })
+          .pipe(Effect.flip);
+        assert.include(error.detail, "Staged changes changed");
+        assert.equal(yield* git(cwd, ["log", "-1", "--pretty=%s"]), "initial commit");
+      }),
+    );
+
+    it("caps each staging list on its own so unstaged files cannot hide staged ones", () => {
+      const record = (xy: string, path: string) =>
+        `1 ${xy} N... 100644 100644 100644 0000000 0000000 ${path}`;
+      const status = parseStagingStatus(
+        [record(".M", "a.txt"), record(".M", "b.txt"), record("M.", "c.txt")],
+        1,
+      );
+      assert.deepEqual(
+        status.staged.map((file) => file.path),
+        ["c.txt"],
+      );
+      assert.deepEqual(
+        status.unstaged.map((file) => file.path),
+        ["a.txt"],
+      );
+      assert.isTrue(status.truncated);
+    });
+
+    it.effect("lists staged and unstaged entries separately", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(cwd, "old name.txt", "moved\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "add file to rename"]);
+        yield* git(cwd, ["mv", "old name.txt", "new name.txt"]);
+        yield* writeTextFile(cwd, "new name.txt", "moved\nand edited\n");
+        yield* writeTextFile(cwd, "README.md", "# staged\n");
+        yield* git(cwd, ["add", "README.md"]);
+        yield* writeTextFile(cwd, "nested/untracked.txt", "new\n");
+
+        const status = yield* driver.getStagingStatus(cwd);
+
+        assert.deepStrictEqual(status, {
+          staged: [
+            { path: "README.md", previousPath: null, change: "modified" },
+            { path: "new name.txt", previousPath: "old name.txt", change: "renamed" },
+          ],
+          unstaged: [
+            { path: "new name.txt", previousPath: null, change: "modified" },
+            { path: "nested/untracked.txt", previousPath: null, change: "untracked" },
+          ],
+          truncated: false,
+        });
+      }),
+    );
+
+    it.effect("stages and unstages literal paths from a subdirectory", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const pathService = yield* Path.Path;
+        yield* writeTextFile(cwd, "selected[1].txt", "literal\n");
+        yield* writeTextFile(cwd, "selected1.txt", "pattern match\n");
+        yield* writeTextFile(cwd, "nested/.keep", "");
+        const nested = pathService.join(cwd, "nested");
+
+        yield* driver.stagePaths({ cwd: nested, paths: ["selected[1].txt"] });
+        assert.equal(yield* git(cwd, ["diff", "--cached", "--name-only"]), "selected[1].txt");
+
+        yield* driver.unstagePaths({ cwd: nested, paths: ["selected[1].txt"] });
+        assert.equal(yield* git(cwd, ["diff", "--cached", "--name-only"]), "");
+      }),
+    );
+
+    it.effect("unstages without a commit and keeps edits made after staging", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+        yield* writeTextFile(cwd, "a.txt", "staged\n");
+        yield* driver.stagePaths({ cwd, paths: ["a.txt"] });
+        yield* writeTextFile(cwd, "a.txt", "edited again\n");
+
+        yield* driver.unstagePaths({ cwd, paths: ["a.txt"] });
+
+        assert.equal(yield* git(cwd, ["status", "--porcelain"]), "?? a.txt");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        assert.equal(
+          yield* fileSystem.readFileString(pathService.join(cwd, "a.txt")),
+          "edited again\n",
+        );
+      }),
+    );
+
+    it.effect("reads staged and unstaged file contents from the index", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(cwd, "README.md", "# staged\n");
+        yield* git(cwd, ["add", "README.md"]);
+        yield* writeTextFile(cwd, "README.md", "# worktree\n");
+
+        const staged = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, { sourceKind: "staged" }),
+        );
+        const unstaged = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, { sourceKind: "unstaged" }),
+        );
+
+        assert.deepStrictEqual(staged, { oldContents: "# test\n", newContents: "# staged\n" });
+        assert.deepStrictEqual(unstaged, {
+          oldContents: "# staged\n",
+          newContents: "# worktree\n",
+        });
+      }),
+    );
+
+    it.effect("changes the index revision when staging leaves working-tree totals unchanged", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(cwd, "README.md", "# changed\n");
+        const before = yield* driver.statusDetailsLocal(cwd);
+
+        yield* driver.stagePaths({ cwd, paths: ["README.md"] });
+        const after = yield* driver.statusDetailsLocal(cwd);
+
+        assert.deepStrictEqual(after.workingTree, before.workingTree);
+        assert.notEqual(after.indexRevision, before.indexRevision);
       }),
     );
 

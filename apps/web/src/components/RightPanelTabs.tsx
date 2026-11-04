@@ -42,6 +42,7 @@ import {
   ChevronRight,
   FileDiff,
   Files,
+  GitCommitVertical,
   Globe2,
   MessagesSquare,
   Plus,
@@ -137,6 +138,7 @@ export interface RightPanelTabsProps {
   onAddBrowserInProfile: (profileId: string) => void;
   onAddTerminal: () => void;
   onAddDiff: () => void;
+  onAddStaging: () => void;
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
@@ -318,6 +320,7 @@ function RightPanelEmptyState(props: {
   browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
   onAddTerminal: () => void;
   onAddDiff: () => void;
+  onAddStaging: () => void;
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
@@ -368,6 +371,14 @@ function RightPanelEmptyState(props: {
       available: props.diffAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.diff,
       onClick: props.onAddDiff,
+    },
+    {
+      label: "Staging",
+      icon: GitCommitVertical,
+      shortcut: "G",
+      available: props.diffAvailable,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.diff,
+      onClick: props.onAddStaging,
     },
     {
       label: "Pull request",
@@ -590,6 +601,8 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "pull-requests":
       return "Pull requests";
+    case "staging":
+      return "Staging";
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
     case "side-chat":
@@ -682,6 +695,8 @@ function SurfaceIcon({
       );
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
+    case "staging":
+      return <GitCommitVertical className="size-3 shrink-0" />;
     case "side-chat":
       return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;
     case "device":
@@ -1124,6 +1139,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddDiff,
     },
     {
+      label: "Staging",
+      icon: GitCommitVertical,
+      shortcut: "G",
+      available: props.diffAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.diff,
+      onClick: props.onAddStaging,
+    },
+    {
       label: "Pull request",
       icon: PullRequestGlyph.pullRequest,
       shortcut: "P",
@@ -1529,6 +1552,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             browserProfiles={browserProfiles}
             onAddTerminal={props.onAddTerminal}
             onAddDiff={props.onAddDiff}
+            onAddStaging={props.onAddStaging}
             onAddFiles={props.onAddFiles}
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}

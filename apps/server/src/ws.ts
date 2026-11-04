@@ -1942,6 +1942,11 @@ export const layerWsRpc = (
         vcsStatusBroadcaster
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
+      // A full refresh can fetch and auto-pull, which index-only changes never need.
+      const refreshLocalGitStatus = (cwd: string) =>
+        vcsStatusBroadcaster
+          .refreshLocalStatus(cwd)
+          .pipe(Effect.ignoreCause({ log: true }), Effect.asVoid);
 
       const getOrchestrationV2ArchivedShellSnapshot = Effect.gen(function* () {
         const { threads, projects, snapshotSequence } = yield* loadShellSnapshotParts({
@@ -3126,6 +3131,11 @@ export const layerWsRpc = (
           vcsProvisioning.initRepository(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.reviewGetBranchCommits]: (input) => review.getBranchCommits(input),
         [WS_METHODS.reviewGetDiffPreview]: (input) => review.getDiffPreview(input),
+        [WS_METHODS.vcsGetStagingStatus]: (input) => gitWorkflow.getStagingStatus(input),
+        [WS_METHODS.vcsStagePaths]: (input) =>
+          gitWorkflow.stagePaths(input).pipe(Effect.ensuring(refreshLocalGitStatus(input.cwd))),
+        [WS_METHODS.vcsUnstagePaths]: (input) =>
+          gitWorkflow.unstagePaths(input).pipe(Effect.ensuring(refreshLocalGitStatus(input.cwd))),
         [WS_METHODS.reviewGetDiffFileContents]: (input) => review.getDiffFileContents(input),
         [WS_METHODS.terminalOpen]: (input) => terminalManager.open(input),
         [WS_METHODS.terminalAttach]: (input, metadata) =>

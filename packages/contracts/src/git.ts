@@ -123,6 +123,46 @@ export const VcsPullInput = Schema.Struct({
 });
 export type VcsPullInput = typeof VcsPullInput.Type;
 
+export const VcsStagingChange = Schema.Literals([
+  "added",
+  "modified",
+  "deleted",
+  "renamed",
+  "copied",
+  "type-changed",
+  "untracked",
+  "conflicted",
+]);
+export type VcsStagingChange = typeof VcsStagingChange.Type;
+
+export const VcsStagingFile = Schema.Struct({
+  /** Relative to the repository root. */
+  path: GitFilePath,
+  previousPath: Schema.NullOr(GitFilePath),
+  change: VcsStagingChange,
+});
+export type VcsStagingFile = typeof VcsStagingFile.Type;
+
+export const VcsStagingStatusInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+});
+export type VcsStagingStatusInput = typeof VcsStagingStatusInput.Type;
+
+export const VcsStagingStatusResult = Schema.Struct({
+  staged: Schema.Array(VcsStagingFile),
+  unstaged: Schema.Array(VcsStagingFile),
+  /** Lists stop at a file cap; acting on "all" files must not be offered when set. */
+  truncated: Schema.Boolean,
+});
+export type VcsStagingStatusResult = typeof VcsStagingStatusResult.Type;
+
+export const VcsStagingPathsInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  /** Relative to the repository root. */
+  paths: Schema.Array(GitFilePath).check(Schema.isMinLength(1)),
+});
+export type VcsStagingPathsInput = typeof VcsStagingPathsInput.Type;
+
 export const GitRunStackedActionInput = Schema.Struct({
   actionId: TrimmedNonEmptyStringSchema,
   cwd: TrimmedNonEmptyStringSchema,
@@ -130,6 +170,8 @@ export const GitRunStackedActionInput = Schema.Struct({
   commitMessage: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
   featureBranch: Schema.optional(Schema.Boolean),
   filePaths: Schema.optional(Schema.Array(GitFilePath).check(Schema.isMinLength(1))),
+  /** Commits the index as staged instead of staging changes first. */
+  stagedOnly: Schema.optional(Schema.Boolean),
   threadId: Schema.optional(ThreadId),
   projectId: Schema.optional(ProjectId),
 });
@@ -234,6 +276,8 @@ const VcsStatusLocalShape = {
     insertions: NonNegativeInt,
     deletions: NonNegativeInt,
   }),
+  // Staging changes the index without changing the working-tree totals above.
+  indexRevision: Schema.optional(Schema.String),
   branchChanges: Schema.optional(
     Schema.Struct({
       baseRef: Schema.NullOr(TrimmedNonEmptyStringSchema),

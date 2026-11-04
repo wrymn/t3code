@@ -71,7 +71,8 @@ export type ReviewDiffPreviewSource = typeof ReviewDiffPreviewSource.Type;
 
 export const ReviewDiffFileContentsInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
-  sourceKind: ReviewDiffPreviewSourceKind,
+  // "staged" compares HEAD with the index and "unstaged" the index with the working tree.
+  sourceKind: Schema.Union([ReviewDiffPreviewSourceKind, Schema.Literals(["staged", "unstaged"])]),
   changeType: Schema.Literals(["change", "rename-pure", "rename-changed", "new", "deleted"]),
   baseRef: Schema.NullOr(TrimmedNonEmptyString),
   headRef: Schema.NullOr(TrimmedNonEmptyString),
