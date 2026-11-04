@@ -68,6 +68,8 @@ vi.mock(import("~/localApi"), async (importOriginal) => {
   };
 });
 
+// The resize test measures layout, which needs the app styles.
+import "~/index.css";
 import { ComposerHandleContext } from "~/composerHandleContext";
 import { dismissContextMenu } from "~/contextMenuFallback";
 import { render } from "../../../test/render";
@@ -85,7 +87,9 @@ const file = (
 ): VcsStagingFile => ({ path, change, previousPath }) as VcsStagingFile;
 
 function setup(overrides: Partial<VcsStagingStatusResult> = {}) {
-  localStorage.removeItem("t3code:staging-view");
+  for (const key of ["view", "lists-width", "list-split"]) {
+    localStorage.removeItem(`t3code:staging-${key}`);
+  }
   state.staging = {
     unstaged: [
       file("app/src/main.ts", "modified"),
@@ -109,7 +113,9 @@ function setup(overrides: Partial<VcsStagingStatusResult> = {}) {
   const composer = { current: { insertTextAtEnd: state.insertTextAtEnd } } as never;
   return render(
     <ComposerHandleContext value={composer}>
-      <StagingPanel environmentId={ENVIRONMENT_ID} cwd={CWD} repositoryRoot="/repo" visible />
+      <div style={{ width: 900, height: 600 }}>
+        <StagingPanel environmentId={ENVIRONMENT_ID} cwd={CWD} repositoryRoot="/repo" visible />
+      </div>
     </ComposerHandleContext>,
   );
 }
@@ -154,6 +160,12 @@ it("stages and unstages by double-click, keyboard, and folder drag", async () =>
   expect(selectedKeys("staged")).toEqual([]);
   state.stage.mockClear();
   await userEvent.keyboard("{Enter}");
+  expect(state.stage).toHaveBeenCalledWith(
+    pathsInput(["app/src/main.ts", "app/src/util.ts", "app/notes.md", "README.md"]),
+  );
+
+  state.stage.mockClear();
+  await userEvent.click(page.getByRole("button", { name: "Stage all" }));
   expect(state.stage).toHaveBeenCalledWith(
     pathsInput(["app/src/main.ts", "app/src/util.ts", "app/notes.md", "README.md"]),
   );
@@ -310,4 +322,42 @@ it("commits only staged changes and blocks the commit while conflicts remain", a
     .element(page.getByRole("button", { name: "Commit", exact: true }))
     .toHaveAttribute("title", "Resolve merge conflicts first.");
   await expect.element(page.getByRole("button", { name: "Commit", exact: true })).toBeDisabled();
+});
+
+it("resizes the file lists and their split by dragging, and resets on double-click", async () => {
+  await using _screen = await setup();
+  const aside = document.querySelector<HTMLElement>("[data-staging-panel] aside")!;
+  const panel = document
+    .querySelector<HTMLElement>("[data-staging-panel]")!
+    .getBoundingClientRect();
+  const separator = (name: string) =>
+    document.querySelector<HTMLElement>(`[role="separator"][aria-label="${name}"]`)!;
+  const drag = (handle: HTMLElement, clientX: number, clientY: number, release = "pointerup") => {
+    const pointer = { bubbles: true, cancelable: true, pointerId: 1, button: 0, clientX, clientY };
+    handle.dispatchEvent(new PointerEvent("pointerdown", pointer));
+    handle.dispatchEvent(new PointerEvent("pointermove", pointer));
+    handle.dispatchEvent(new PointerEvent(release, pointer));
+  };
+  const height = (label: string) =>
+    document.querySelector(`section[aria-label="${label}"]`)!.getBoundingClientRect().height;
+
+  drag(separator("Resize file lists"), panel.right - 500, panel.top + 10);
+  await vi.waitFor(() => expect(aside.getBoundingClientRect().width).toBe(500));
+  expect(localStorage.getItem("t3code:staging-lists-width")).toBe("500");
+
+  // An interrupted drag snaps back instead of saving where it stopped.
+  drag(separator("Resize file lists"), panel.right - 400, panel.top + 10, "pointercancel");
+  expect(aside.getBoundingClientRect().width).toBe(500);
+  expect(localStorage.getItem("t3code:staging-lists-width")).toBe("500");
+
+  // Past the bottom edge clamps, so neither list can disappear.
+  drag(separator("Resize staged and unstaged lists"), panel.right - 10, panel.bottom + 100);
+  expect(localStorage.getItem("t3code:staging-list-split")).toBe("0.9");
+  expect(height("Staged changes")).toBeGreaterThan(0);
+  expect(height("Unstaged changes")).toBeGreaterThan(height("Staged changes") * 4);
+
+  await userEvent.dblClick(separator("Resize file lists"));
+  await userEvent.dblClick(separator("Resize staged and unstaged lists"));
+  await vi.waitFor(() => expect(aside.getBoundingClientRect().width).toBe(320));
+  expect(Math.abs(height("Unstaged changes") - height("Staged changes"))).toBeLessThan(2);
 });

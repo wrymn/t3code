@@ -10,10 +10,18 @@ import type {
   ReviewDiffFileContentsInput,
   VcsStagingFile,
 } from "@t3tools/contracts";
-import { ChevronDown, FolderTreeIcon, SearchIcon } from "lucide-react";
+import { ChevronDown, ChevronsDownIcon, FolderTreeIcon, SearchIcon } from "lucide-react";
 import { Schema } from "effect";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
+import {
+  useRef,
+  useState,
+  type CSSProperties,
+  type DragEvent,
+  type KeyboardEvent,
+  type MouseEvent,
+  type PointerEvent,
+} from "react";
 import { flushSync } from "react-dom";
 
 import { PierreEntryIcon } from "~/components/chat/PierreEntryIcon";
@@ -71,6 +79,10 @@ const CHANGE_LABELS: Record<VcsStagingFile["change"], { letter: string; classNam
 
 const DRAG_MIME = "application/x-t3-staging";
 const StagingViewSchema = Schema.Literals(["list", "tree"]);
+const DEFAULT_LISTS_WIDTH = 320;
+const MIN_PANE_WIDTH = 200;
+const DEFAULT_LIST_SPLIT = 0.5;
+const MIN_LIST_SPLIT = 0.1;
 
 function changeTypeOf(file: VcsStagingFile): ReviewDiffFileContentsInput["changeType"] {
   switch (file.change) {
@@ -114,6 +126,20 @@ export function StagingPanel(props: {
   const [filter, setFilter] = useState<string | null>(null);
   const filterInputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const [storedListsWidth, setListsWidth] = useLocalStorage<number, number>(
+    "t3code:staging-lists-width",
+    DEFAULT_LISTS_WIDTH,
+    Schema.Finite,
+  );
+  const [storedListSplit, setListSplit] = useLocalStorage<number, number>(
+    "t3code:staging-list-split",
+    DEFAULT_LIST_SPLIT,
+    Schema.Finite,
+  );
+  const listsWidth = Math.max(storedListsWidth, MIN_PANE_WIDTH);
+  const listSplit = clamp(storedListSplit, MIN_LIST_SPLIT, 1 - MIN_LIST_SPLIT);
+  const asideRef = useRef<HTMLElement>(null);
+  const listsRef = useRef<HTMLDivElement>(null);
   const [collapsed, setCollapsed] = useState<Record<StagingListKind, ReadonlySet<string>>>({
     unstaged: new Set(),
     staged: new Set(),
@@ -435,6 +461,30 @@ export function StagingPanel(props: {
     return <StagingMessage>{stagingQuery.error}</StagingMessage>;
   }
 
+  // Drags write the DOM directly and commit once on release, so moves do not re-render the lists.
+  const applyListsWidth = (width: number) =>
+    asideRef.current?.style.setProperty("width", `${width}px`);
+  const applyListSplit = (split: number) =>
+    listsRef.current?.style.setProperty("--staging-split", String(split));
+  const resizeLists = (event: PointerEvent) => {
+    const panel = panelRef.current?.getBoundingClientRect();
+    if (!panel) return null;
+    const width = clamp(panel.right - event.clientX, MIN_PANE_WIDTH, panel.width - MIN_PANE_WIDTH);
+    applyListsWidth(width);
+    return width;
+  };
+  const resizeListSplit = (event: PointerEvent) => {
+    const rect = listsRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    const split = clamp(
+      (event.clientY - rect.top) / rect.height,
+      MIN_LIST_SPLIT,
+      1 - MIN_LIST_SPLIT,
+    );
+    applyListSplit(split);
+    return split;
+  };
+
   const openFilter = () => {
     setFilter((current) => current ?? "");
     queueMicrotask(() => filterInputRef.current?.select());
@@ -469,7 +519,7 @@ export function StagingPanel(props: {
 
   const filterStrip =
     filter === null ? null : (
-      <div className="shrink-0 border-b border-border/60 p-2">
+      <div className="shrink-0 border-b border-border p-2">
         <InputGroup>
           <InputGroupAddon>
             <SearchIcon />
@@ -579,7 +629,10 @@ export function StagingPanel(props: {
     return (
       <section
         aria-label={isUnstaged ? "Unstaged changes" : "Staged changes"}
-        className={cn("flex min-h-0 flex-1 flex-col", dropTarget === list && "bg-accent/40")}
+        className={cn("flex min-h-0 basis-0 flex-col", dropTarget === list && "bg-accent/40")}
+        style={{
+          flexGrow: isUnstaged ? "var(--staging-split)" : "calc(1 - var(--staging-split))",
+        }}
         onDragOver={(event) => {
           if (!event.dataTransfer.types.includes(DRAG_MIME)) return;
           event.preventDefault();
@@ -591,10 +644,10 @@ export function StagingPanel(props: {
         }}
         onDrop={(event) => onDrop(list, event)}
       >
-        <header className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 px-2 text-xs text-muted-foreground">
-          {isUnstaged ? filterToggle : null}
-          <span className="flex-1" />
-          {isUnstaged ? viewToggle : null}
+        <header className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border px-2 text-xs text-muted-foreground">
+          <h3 className="min-w-0 flex-1 truncate px-1 font-medium text-foreground">
+            {isUnstaged ? "Unstaged" : "Staged"}
+          </h3>
           <Button
             size="compact"
             variant="outline"
@@ -604,7 +657,6 @@ export function StagingPanel(props: {
             {isUnstaged ? "Stage" : "Unstage"}
           </Button>
         </header>
-        {isUnstaged ? filterStrip : null}
         <div role="listbox" aria-multiselectable className="min-h-0 flex-1 overflow-y-auto p-1.5">
           {files.length === 0 ? (
             <p className="px-3 py-2 text-xs text-muted-foreground">
@@ -640,7 +692,7 @@ export function StagingPanel(props: {
         openFilter();
       }}
     >
-      <div className="min-h-0 min-w-0 flex-1 overflow-auto border-e border-border/60">
+      <div className="min-h-0 min-w-0 flex-1 overflow-auto border-e border-border">
         {focused ? (
           <StagingFileDiff
             key={`${focused.list}:${focused.file.path}`}
@@ -654,16 +706,74 @@ export function StagingPanel(props: {
           <StagingMessage>Select a file to see its changes.</StagingMessage>
         )}
       </div>
-      <aside className="flex min-h-0 w-80 max-w-[50%] shrink-0 flex-col">
+      <aside
+        ref={asideRef}
+        // Matches the drag clamp, so a width saved in a wider window still leaves the diff its minimum.
+        className="relative flex min-h-0 max-w-[calc(100%-200px)] shrink-0 flex-col"
+        style={{ width: listsWidth }}
+      >
+        <ResizeHandle
+          orientation="vertical"
+          label="Resize file lists"
+          onResize={resizeLists}
+          onCommit={setListsWidth}
+          onCancel={() => applyListsWidth(listsWidth)}
+          onReset={() => setListsWidth(DEFAULT_LISTS_WIDTH)}
+        />
+        <div className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border px-2">
+          {filterToggle}
+          <span className="flex-1" />
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  aria-label="Stage all"
+                  variant="ghost"
+                  size="icon-xs"
+                  // A truncated status does not list every file, so "all" would be a lie.
+                  disabled={
+                    !canStage ||
+                    moving ||
+                    staging?.truncated !== false ||
+                    lists.unstaged.length === 0
+                  }
+                  onClick={() => void move("unstaged", lists.unstaged)}
+                />
+              }
+            >
+              <ChevronsDownIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {query === "" ? "Stage all" : "Stage all matches"}
+            </TooltipPopup>
+          </Tooltip>
+          {viewToggle}
+        </div>
+        {filterStrip}
         {staging?.truncated ? (
-          <p className="border-b border-border/60 px-3 py-1.5 text-xs text-muted-foreground">
+          <p className="border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
             Showing the first {staging.unstaged.length + staging.staged.length} changed files.
           </p>
         ) : null}
-        {renderList("unstaged")}
-        <div className="border-t border-border/60" />
-        {renderList("staged")}
-        <footer className="shrink-0 border-t border-border/60 p-2">
+        <div
+          ref={listsRef}
+          className="flex min-h-0 flex-1 flex-col"
+          style={{ "--staging-split": listSplit } as CSSProperties}
+        >
+          {renderList("unstaged")}
+          <div className="relative border-t border-border">
+            <ResizeHandle
+              orientation="horizontal"
+              label="Resize staged and unstaged lists"
+              onResize={resizeListSplit}
+              onCommit={setListSplit}
+              onCancel={() => applyListSplit(listSplit)}
+              onReset={() => setListSplit(DEFAULT_LIST_SPLIT)}
+            />
+          </div>
+          {renderList("staged")}
+        </div>
+        <footer className="shrink-0 border-t border-border p-2">
           <Button
             className="w-full"
             size="compact"
@@ -676,6 +786,59 @@ export function StagingPanel(props: {
         </footer>
       </aside>
     </div>
+  );
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), Math.max(min, max));
+}
+
+/** Double-click restores the default size. */
+function ResizeHandle(props: {
+  readonly orientation: "vertical" | "horizontal";
+  readonly label: string;
+  /** Applies the size under the pointer and returns it. */
+  readonly onResize: (event: PointerEvent) => number | null;
+  readonly onCommit: (size: number) => void;
+  readonly onCancel: () => void;
+  readonly onReset: () => void;
+}) {
+  const dragging = useRef(false);
+  const size = useRef<number | null>(null);
+  const end = (commit: boolean) => {
+    if (!dragging.current) return;
+    dragging.current = false;
+    const final = size.current;
+    size.current = null;
+    if (!commit) props.onCancel();
+    else if (final !== null) props.onCommit(final);
+  };
+  return (
+    <div
+      role="separator"
+      aria-orientation={props.orientation}
+      aria-label={props.label}
+      className={cn(
+        "absolute z-10 touch-none",
+        props.orientation === "vertical"
+          ? "inset-y-0 -start-1 w-2 cursor-col-resize"
+          : "inset-x-0 -top-1 h-2 cursor-row-resize",
+      )}
+      onPointerDown={(event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        dragging.current = true;
+        // Keeps moves arriving once the pointer leaves the thin handle.
+        if (event.isTrusted) event.currentTarget.setPointerCapture(event.pointerId);
+      }}
+      onPointerMove={(event) => {
+        if (dragging.current) size.current = props.onResize(event) ?? size.current;
+      }}
+      onPointerUp={() => end(true)}
+      onPointerCancel={() => end(false)}
+      onLostPointerCapture={() => end(true)}
+      onDoubleClick={props.onReset}
+    />
   );
 }
 
