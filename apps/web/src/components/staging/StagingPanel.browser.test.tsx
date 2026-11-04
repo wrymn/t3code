@@ -190,6 +190,35 @@ it("collapses a folder and everything below it with Alt", async () => {
   await vi.waitFor(() => expect(row("unstaged", "app/src/main.ts")).not.toBeNull());
 });
 
+it("filters both lists from find or the filter button, and acts only on matches", async () => {
+  await using _screen = await setup();
+  const filterInput = page.getByRole("searchbox", { name: "Filter changed files" });
+
+  await userEvent.click(row("unstaged", "README.md"));
+  await userEvent.keyboard("{ControlOrMeta>}f{/ControlOrMeta}");
+  await expect.element(filterInput).toHaveFocus();
+  await userEvent.keyboard(".TS");
+  await vi.waitFor(() => expect(row("unstaged", "README.md")).toBeNull());
+  expect(row("unstaged", "app/src/main.ts")).not.toBeNull();
+  expect(row("staged", "app/lib/new.ts")).not.toBeNull();
+
+  await userEvent.click(row("unstaged", "app/src/main.ts"));
+  await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}{Enter}");
+  expect(state.stage).toHaveBeenCalledWith(pathsInput(["app/src/main.ts", "app/src/util.ts"]));
+
+  // Escape closes the filter from a row as well as from the field.
+  await userEvent.keyboard("{Escape}");
+  await expect.element(filterInput).not.toBeInTheDocument();
+  expect(row("unstaged", "README.md")).not.toBeNull();
+  await userEvent.keyboard("{ControlOrMeta>}f{/ControlOrMeta}");
+  await expect.element(filterInput).toHaveFocus();
+  await userEvent.keyboard("{Escape}");
+  await expect.element(filterInput).not.toBeInTheDocument();
+
+  await userEvent.click(page.getByRole("button", { name: "Filter files" }));
+  await expect.element(filterInput).toHaveFocus();
+});
+
 it("offers list-specific context menu actions and confirms before discarding", async () => {
   await using _screen = await setup({
     unstaged: [file("app/notes.md", "untracked"), file("app/conflict.ts", "conflicted")],
@@ -247,6 +276,11 @@ it("copies and mentions every selected path, relative to the project when inside
 
   await openMenu("unstaged", "README.md");
   await clickMenuItem("Copy paths");
+  await vi.waitFor(() => expect(clipboard).toHaveBeenCalledWith("app/notes.md\nREADME.md"));
+  dismissContextMenu();
+  clipboard.mockClear();
+  row("unstaged", "README.md").focus();
+  await userEvent.keyboard("{ControlOrMeta>}c{/ControlOrMeta}");
   await vi.waitFor(() => expect(clipboard).toHaveBeenCalledWith("app/notes.md\nREADME.md"));
 
   await openMenu("unstaged", "README.md");

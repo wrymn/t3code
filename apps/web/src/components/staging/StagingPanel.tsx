@@ -10,14 +10,16 @@ import type {
   ReviewDiffFileContentsInput,
   VcsStagingFile,
 } from "@t3tools/contracts";
-import { ChevronDown, FolderTreeIcon } from "lucide-react";
+import { ChevronDown, FolderTreeIcon, SearchIcon } from "lucide-react";
 import { Schema } from "effect";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
+import { useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
+import { flushSync } from "react-dom";
 
 import { PierreEntryIcon } from "~/components/chat/PierreEntryIcon";
 import { DIFF_VIEW_UNSAFE_CSS } from "~/components/diffs/StyledDiffCodeView";
 import { Button } from "~/components/ui/button";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
 import { toastManager } from "~/components/ui/toast";
 import { Toggle } from "~/components/ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -109,6 +111,9 @@ export function StagingPanel(props: {
     "list",
     StagingViewSchema,
   );
+  const [filter, setFilter] = useState<string | null>(null);
+  const filterInputRef = useRef<HTMLInputElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const [collapsed, setCollapsed] = useState<Record<StagingListKind, ReadonlySet<string>>>({
     unstaged: new Set(),
     staged: new Set(),
@@ -122,9 +127,12 @@ export function StagingPanel(props: {
       : vcsEnvironment.stagingStatus({ environmentId, input: { cwd } }),
   );
   const staging = stagingQuery.data;
+  const query = filter?.trim().toLowerCase() ?? "";
+  const matches = (file: VcsStagingFile) => query === "" || file.path.toLowerCase().includes(query);
+  // Everything that acts on rows, including folder moves and select-all, sees only matches.
   const lists: Record<StagingListKind, ReadonlyArray<VcsStagingFile>> = {
-    unstaged: staging?.unstaged ?? [],
-    staged: staging?.staged ?? [],
+    unstaged: (staging?.unstaged ?? []).filter(matches),
+    staged: (staging?.staged ?? []).filter(matches),
   };
   const rows: Record<StagingListKind, ReadonlyArray<StagingRow>> = {
     unstaged: stagingRows(lists.unstaged, view, collapsed.unstaged),
@@ -265,12 +273,26 @@ export function StagingPanel(props: {
     document.getElementById(rowId(list, row.key))?.focus();
   };
 
+  const copyPaths = (keys: Iterable<string>) =>
+    writeTextToClipboard([...keys].map((key) => key.replace(/\/$/, "")).join("\n")).catch(() =>
+      toastManager.add({ type: "error", title: "Failed to copy path" }),
+    );
+
   const onRowKeyDown = (list: StagingListKind, row: StagingRow, event: KeyboardEvent) => {
     const listRows = rows[list];
     const index = listRows.findIndex((entry) => entry.key === row.key);
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a") {
       event.preventDefault();
       setSelection({ list, anchor: row.key, keys: new Set(listRows.map((entry) => entry.key)) });
+    } else if (
+      (event.metaKey || event.ctrlKey) &&
+      !event.shiftKey &&
+      !event.altKey &&
+      event.key.toLowerCase() === "c"
+    ) {
+      event.preventDefault();
+      const keys = selection?.list === list ? selection.keys : new Set([row.key]);
+      void copyPaths(listRows.map((entry) => entry.key).filter((key) => keys.has(key)));
     } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       const next = listRows[index + (event.key === "ArrowDown" ? 1 : -1)];
@@ -351,9 +373,7 @@ export function StagingPanel(props: {
     if (fileItems.some((item) => item.id === clicked) || clicked.startsWith("editor:")) {
       await fileContextMenu.activate(clicked as FileContextMenuAction, target);
     } else if (clicked === "copy-path") {
-      await writeTextToClipboard(paths.join("\n")).catch(() =>
-        toastManager.add({ type: "error", title: "Failed to copy path" }),
-      );
+      await copyPaths(keys);
     } else if (clicked === "add-to-chat") {
       const mentions = paths.map((filePath) =>
         serializeComposerFileLink(
@@ -399,10 +419,10 @@ export function StagingPanel(props: {
     void move(payload.from, stagingFilesForKeys(lists[payload.from], new Set(payload.keys)));
   };
 
-  const hasConflicts = lists.unstaged.some((file) => file.change === "conflicted");
+  const hasConflicts = (staging?.unstaged ?? []).some((file) => file.change === "conflicted");
   const commitDisabledReason = !commitAction.isAllowed
     ? "This connection cannot change source control."
-    : lists.staged.length === 0
+    : (staging?.staged.length ?? 0) === 0
       ? "Stage files to commit them."
       : hasConflicts
         ? "Resolve merge conflicts first."
@@ -414,6 +434,60 @@ export function StagingPanel(props: {
   if (stagingQuery.error && !staging) {
     return <StagingMessage>{stagingQuery.error}</StagingMessage>;
   }
+
+  const openFilter = () => {
+    setFilter((current) => current ?? "");
+    queueMicrotask(() => filterInputRef.current?.select());
+  };
+  const closeFilter = () => {
+    // The field unmounts, so keyboard focus returns to the lists instead of the page.
+    const hadFocus = document.activeElement === filterInputRef.current;
+    flushSync(() => setFilter(null));
+    if (hadFocus) {
+      panelRef.current?.querySelector<HTMLElement>('[role="option"][tabindex="0"]')?.focus();
+    }
+  };
+
+  const filterToggle = (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Toggle
+            aria-label="Filter files"
+            variant="ghost"
+            size="sm"
+            pressed={filter !== null}
+            onPressedChange={(pressed) => (pressed ? openFilter() : closeFilter())}
+          />
+        }
+      >
+        <SearchIcon className="size-3.5" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">Filter files</TooltipPopup>
+    </Tooltip>
+  );
+
+  const filterStrip =
+    filter === null ? null : (
+      <div className="shrink-0 border-b border-border/60 p-2">
+        <InputGroup>
+          <InputGroupAddon>
+            <SearchIcon />
+          </InputGroupAddon>
+          <InputGroupInput
+            ref={filterInputRef}
+            type="search"
+            size="sm"
+            autoFocus
+            aria-label="Filter changed files"
+            placeholder="Filter"
+            spellCheck={false}
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+          />
+        </InputGroup>
+      </div>
+    );
 
   const viewToggle = (
     <Tooltip>
@@ -517,15 +591,9 @@ export function StagingPanel(props: {
         }}
         onDrop={(event) => onDrop(list, event)}
       >
-        <header
-          className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 px-2 text-xs text-muted-foreground"
-          data-surface-subheader
-        >
-          <h3 className="min-w-0 truncate px-1 font-medium text-foreground">
-            {isUnstaged ? "Unstaged" : "Staged"}
-          </h3>
-          <span className="me-auto tabular-nums">{files.length}</span>
-          {isUnstaged ? viewToggle : null}
+        <header className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 px-2 text-xs text-muted-foreground">
+          {isUnstaged ? filterToggle : null}
+          <span className="flex-1" />
           <Button
             size="compact"
             variant="outline"
@@ -534,11 +602,17 @@ export function StagingPanel(props: {
           >
             {isUnstaged ? "Stage" : "Unstage"}
           </Button>
+          {isUnstaged ? viewToggle : null}
         </header>
+        {isUnstaged ? filterStrip : null}
         <div role="listbox" aria-multiselectable className="min-h-0 flex-1 overflow-y-auto p-1.5">
           {files.length === 0 ? (
             <p className="px-3 py-2 text-xs text-muted-foreground">
-              {isUnstaged ? "No unstaged changes." : "Nothing staged."}
+              {(staging?.[list].length ?? 0) > 0
+                ? "No matches."
+                : isUnstaged
+                  ? "No unstaged changes."
+                  : "Nothing staged."}
             </p>
           ) : (
             rows[list].map((row, index) => renderRow(list, row, index === 0))
@@ -549,7 +623,23 @@ export function StagingPanel(props: {
   };
 
   return (
-    <div className="flex h-full min-h-0 w-full">
+    <div
+      ref={panelRef}
+      className="flex h-full min-h-0 w-full"
+      data-staging-panel
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && filter !== null) {
+          event.preventDefault();
+          closeFilter();
+          return;
+        }
+        // Inside the panel, find filters the lists instead of opening the browser or thread find.
+        if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
+        if (event.key.toLowerCase() !== "f") return;
+        event.preventDefault();
+        openFilter();
+      }}
+    >
       <div className="min-h-0 min-w-0 flex-1 overflow-auto border-e border-border/60">
         {focused ? (
           <StagingFileDiff
@@ -567,7 +657,7 @@ export function StagingPanel(props: {
       <aside className="flex min-h-0 w-80 max-w-[50%] shrink-0 flex-col">
         {staging?.truncated ? (
           <p className="border-b border-border/60 px-3 py-1.5 text-xs text-muted-foreground">
-            Showing the first {lists.unstaged.length + lists.staged.length} changed files.
+            Showing the first {staging.unstaged.length + staging.staged.length} changed files.
           </p>
         ) : null}
         {renderList("unstaged")}

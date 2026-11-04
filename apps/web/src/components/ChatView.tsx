@@ -2706,8 +2706,11 @@ export default function ChatView(props: ChatViewProps) {
       "thread.copyReference": ({ event }) => {
         if (!event.repeat) copyActiveThreadReference();
       },
-      "chat.find": () => {
+      "chat.find": ({ event }) => {
         if (!isServerThread || serverConfig?.threadFind !== true || activeThreadKey === null)
+          return false;
+        // The staging panel uses find to filter its own lists.
+        if (event.target instanceof Element && event.target.closest("[data-staging-panel]"))
           return false;
         openThreadFind(activeThreadKey);
       },
