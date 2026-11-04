@@ -7,6 +7,7 @@ import {
   type VcsListRefsInput,
   type VcsListRefsResult,
   type VcsStatusResult,
+  type VcsStatusStreamEvent,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -747,6 +748,100 @@ function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
     ...overrides,
   };
 }
+
+describe("staging status", () => {
+  it.effect("refetches after index writes and when only the index revision changes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let reads = 0;
+        const statusEvents = yield* Queue.unbounded<VcsStatusStreamEvent>();
+        const client = {
+          [WS_METHODS.vcsGetStagingStatus]: () => Effect.sync(() => ++reads),
+          [WS_METHODS.vcsStagePaths]: () => Effect.void,
+          [WS_METHODS.vcsDiscardPaths]: () => Effect.void,
+          [WS_METHODS.subscribeVcsStatus]: () => Stream.fromQueue(statusEvents),
+        } as unknown as WsRpcProtocolClient;
+        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+          target: TARGET,
+          state: yield* SubscriptionRef.make(CONNECTED_CONNECTION_STATE),
+          session: yield* SubscriptionRef.make(Option.some(session(client))),
+          prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+          connect: Effect.void,
+          disconnect: Effect.void,
+          retryNow: Effect.void,
+        } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+        const run: EnvironmentRegistry.EnvironmentRegistry["Service"]["run"] = (
+          _environmentId,
+          effect,
+        ) => Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+        const followStream: EnvironmentRegistry.EnvironmentRegistry["Service"]["followStream"] = (
+          _environmentId,
+          stream,
+        ) => Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+        const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+          run,
+          followStream,
+        } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+        const runtime = Atom.runtime(
+          Layer.merge(
+            Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+            Layer.succeed(Persistence.EnvironmentCacheStore, cacheWithRefs(Option.none())),
+          ),
+        );
+        const atoms = createVcsEnvironmentAtoms(runtime);
+        const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+          Effect.sync(() => registry.dispose()),
+        );
+        const target = { environmentId: TARGET.environmentId, input: { cwd: "/repo" } };
+        const statusAtom = atoms.status(target);
+        const indexRevisionSeen = (revision: string) =>
+          Effect.callback<void>((resume) => {
+            const check = () => {
+              const status = Option.getOrNull(AsyncResult.value(registry.get(statusAtom)));
+              if (status?.indexRevision === revision) resume(Effect.void);
+            };
+            check();
+            return Effect.sync(registry.subscribe(statusAtom, check));
+          });
+        const local = (indexRevision: string): VcsStatusStreamEvent => ({
+          _tag: "localUpdated",
+          local: {
+            isRepo: true,
+            hasPrimaryRemote: false,
+            isDefaultRef: true,
+            refName: "main",
+            hasWorkingTreeChanges: true,
+            workingTree: { files: [], insertions: 1, deletions: 0 },
+            indexRevision,
+          },
+        });
+
+        yield* Queue.offer(statusEvents, local("index-1"));
+        yield* indexRevisionSeen("index-1");
+        const stagingAtom = atoms.stagingStatus(target);
+        registry.mount(stagingAtom);
+        const read = AtomRegistry.getResult(registry, stagingAtom, {
+          suspendOnWaiting: true,
+        }).pipe(Effect.tap(() => Effect.yieldNow));
+        expect(yield* read).toBe(1);
+
+        yield* Effect.promise(() =>
+          atoms.stagePaths.run(registry, { ...target, input: { cwd: "/repo", paths: ["a"] } }),
+        );
+        expect(yield* read).toBe(2);
+        yield* Effect.promise(() =>
+          atoms.discardPaths.run(registry, { ...target, input: { cwd: "/repo", paths: ["a"] } }),
+        );
+        expect(yield* read).toBe(3);
+
+        // `git add` outside T3 Code changes the index but not the working-tree totals.
+        yield* Queue.offer(statusEvents, local("index-2"));
+        yield* indexRevisionSeen("index-2");
+        expect(yield* read).toBe(4);
+      }),
+    ),
+  );
+});
 
 describe("resolveQuickAction", () => {
   it("commits local changes without pushing when the branch is behind upstream", () => {

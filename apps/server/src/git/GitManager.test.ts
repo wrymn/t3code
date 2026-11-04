@@ -3178,6 +3178,14 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             }),
         },
       });
+      const mixed = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        stagedOnly: true,
+        filePaths: ["b.txt"],
+      }).pipe(Effect.result);
+      expect(Result.isFailure(mixed)).toBe(true);
+
       const result = yield* runStackedAction(manager, {
         cwd: repoDir,
         action: "commit",
