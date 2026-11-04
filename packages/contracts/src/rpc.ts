@@ -463,6 +463,7 @@ export const WS_METHODS = {
   vcsGetStagingStatus: "vcs.getStagingStatus",
   vcsStagePaths: "vcs.stagePaths",
   vcsUnstagePaths: "vcs.unstagePaths",
+  vcsDiscardPaths: "vcs.discardPaths",
 
   gitRunStackedAction: "git.runStackedAction",
   gitResolvePullRequest: "git.resolvePullRequest",
@@ -1471,6 +1472,11 @@ const WsVcsUnstagePathsRpc = Rpc.make(WS_METHODS.vcsUnstagePaths, {
   error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
 });
 
+const WsVcsDiscardPathsRpc = Rpc.make(WS_METHODS.vcsDiscardPaths, {
+  payload: VcsStagingPathsInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
 const WsVcsPullRpc = Rpc.make(WS_METHODS.vcsPull, {
   payload: VcsPullInput,
   success: VcsPullResult,
@@ -2157,6 +2163,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsGetStagingStatusRpc,
   WsVcsStagePathsRpc,
   WsVcsUnstagePathsRpc,
+  WsVcsDiscardPathsRpc,
   WsGitRunStackedActionRpc,
   WsGitResolvePullRequestRpc,
   WsGitPreparePullRequestThreadRpc,

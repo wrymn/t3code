@@ -419,6 +419,13 @@ export function createVcsEnvironmentAtoms<R, E>(
       concurrency: vcsCommandConcurrency,
       onSettled: bumpStaging,
     }),
+    discardPaths: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:discard-paths",
+      tag: WS_METHODS.vcsDiscardPaths,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: bumpStaging,
+    }),
     init: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:init",
       tag: WS_METHODS.vcsInit,

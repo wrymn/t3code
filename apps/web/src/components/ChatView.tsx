@@ -3233,6 +3233,9 @@ export default function ChatView(props: ChatViewProps) {
       files={{
         projectName: activeProject?.title ?? null,
         workspaceRoot: activeWorkspaceRoot,
+        repositoryRoot: activeThread?.worktreePath
+          ? undefined
+          : activeProject?.repositoryIdentity?.rootPath,
         availableEditors,
         pendingSurfaceIds: pendingFileSurfaceIds,
         onOpenFile: openFileSurfaceStable,

@@ -12,6 +12,7 @@ import type {
 } from "@t3tools/contracts";
 import { ChevronDown, FolderTreeIcon } from "lucide-react";
 import { Schema } from "effect";
+import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
 
 import { PierreEntryIcon } from "~/components/chat/PierreEntryIcon";
@@ -20,7 +21,13 @@ import { Button } from "~/components/ui/button";
 import { toastManager } from "~/components/ui/toast";
 import { Toggle } from "~/components/ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { useComposerHandleContext } from "~/composerHandleContext";
+import { joinHostPath } from "~/components/files/filePath";
+import { resolveDiffPathForWorkspace } from "~/diffFileActions";
+import { useFileContextMenu, type FileContextMenuAction } from "~/fileContextMenu";
+import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { readLocalApi } from "~/localApi";
 import { useRenderedAppearance } from "~/hooks/useTheme";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
@@ -90,9 +97,10 @@ function pathsFor(files: ReadonlyArray<VcsStagingFile>): string[] {
 export function StagingPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly cwd: string | null;
+  readonly repositoryRoot: string | undefined;
   readonly visible: boolean;
 }) {
-  const { environmentId, cwd } = props;
+  const { environmentId, cwd, repositoryRoot } = props;
   const theme = useRenderedAppearance();
   const [storedSelection, setSelection] = useState<StagingSelection | null>(null);
   const [dropTarget, setDropTarget] = useState<StagingListKind | null>(null);
@@ -142,6 +150,9 @@ export function StagingPanel(props: {
   const canStage = useAtomValue(vcsEnvironment.stagePaths.permissionAtom(environmentId));
   const stagePaths = useAtomCommand(vcsEnvironment.stagePaths);
   const unstagePaths = useAtomCommand(vcsEnvironment.unstagePaths);
+  const discardPaths = useAtomCommand(vcsEnvironment.discardPaths);
+  const fileContextMenu = useFileContextMenu(environmentId);
+  const composerRef = useComposerHandleContext();
   const [moving, setMoving] = useState(false);
   const commitAction = useGitStackedAction({ environmentId, cwd });
 
@@ -156,7 +167,20 @@ export function StagingPanel(props: {
           return file ? { list: selection.list, file } : null;
         })();
 
-  const move = async (from: StagingListKind, files: ReadonlyArray<VcsStagingFile>) => {
+  const move = (from: StagingListKind, files: ReadonlyArray<VcsStagingFile>) =>
+    applyToFiles(
+      from,
+      files,
+      from === "unstaged" ? stagePaths : unstagePaths,
+      from === "unstaged" ? "Stage failed" : "Unstage failed",
+    );
+
+  const applyToFiles = async (
+    from: StagingListKind,
+    files: ReadonlyArray<VcsStagingFile>,
+    command: typeof stagePaths,
+    failureTitle: string,
+  ) => {
     if (cwd === null || files.length === 0 || moving || !canStage) return;
     setMoving(true);
     const movedPaths = new Set(files.map((file) => file.path));
@@ -166,7 +190,6 @@ export function StagingPanel(props: {
       collapsed[from],
     );
     const next = stagingSuccessorKey(rows[from], remainingRows, movedPaths);
-    const command = from === "unstaged" ? stagePaths : unstagePaths;
     const result = await command({ environmentId, input: { cwd, paths: pathsFor(files) } });
     setMoving(false);
     if (result._tag === "Failure") {
@@ -174,7 +197,7 @@ export function StagingPanel(props: {
       const error = squashAtomCommandFailure(result);
       toastManager.add({
         type: "error",
-        title: from === "unstaged" ? "Stage failed" : "Unstage failed",
+        title: failureTitle,
         description: error instanceof Error ? error.message : "An error occurred.",
       });
       return;
@@ -273,6 +296,91 @@ export function StagingPanel(props: {
     }
   };
 
+  const discard = async (files: ReadonlyArray<VcsStagingFile>) => {
+    const api = readLocalApi();
+    if (!api || files.length === 0) return;
+    const [only] = files;
+    const subject = files.length === 1 && only ? `"${only.path}"` : `${files.length} files`;
+    const deletes = files.some((file) => file.change === "untracked");
+    const confirmed = await api.dialogs.confirm(
+      `Discard changes to ${subject}?${deletes ? " Untracked files will be deleted." : ""} This cannot be undone.`,
+      { variant: "destructive" },
+    );
+    if (confirmed) await applyToFiles("unstaged", files, discardPaths, "Discard failed");
+  };
+
+  const onRowContextMenu = async (list: StagingListKind, row: StagingRow, event: MouseEvent) => {
+    const api = readLocalApi();
+    if (!api || cwd === null) return;
+    event.preventDefault();
+    const inSelection = isRowSelected(list, row.key);
+    const keys = inSelection && selection ? [...selection.keys] : [row.key];
+    if (!inSelection) setSelection({ list, anchor: row.key, keys: new Set([row.key]) });
+    const files = stagingFilesForKeys(lists[list], new Set(keys));
+    const paths = keys.map((key) => key.replace(/\/$/, ""));
+    // Status paths are repository-relative and may sit outside a project in a repo subfolder.
+    const root = repositoryRoot ?? cwd;
+    const target = { environmentId, filePath: row.key.replace(/\/$/, ""), workspaceRoot: root };
+    const fileItems = fileContextMenu.buildItems(target);
+    const discardable = list === "unstaged" ? files.filter((f) => f.change !== "conflicted") : [];
+    const clicked = await api.contextMenu.show(
+      [
+        ...fileItems,
+        { id: "copy-path", label: paths.length === 1 ? "Copy path" : "Copy paths" },
+        { id: "add-to-chat", label: "Add to chat" },
+        {
+          id: "move",
+          label: list === "unstaged" ? "Stage" : "Unstage",
+          separatorBefore: true,
+          disabled: !canStage,
+        },
+        ...(discardable.length > 0
+          ? [
+              {
+                id: "discard",
+                label: "Discard changes...",
+                destructive: true,
+                disabled: !canStage,
+              },
+            ]
+          : []),
+      ],
+      { x: event.clientX, y: event.clientY },
+    );
+    if (clicked === null) return;
+    if (fileItems.some((item) => item.id === clicked) || clicked.startsWith("editor:")) {
+      await fileContextMenu.activate(clicked as FileContextMenuAction, target);
+    } else if (clicked === "copy-path") {
+      await writeTextToClipboard(paths.join("\n")).catch(() =>
+        toastManager.add({ type: "error", title: "Failed to copy path" }),
+      );
+    } else if (clicked === "add-to-chat") {
+      const mentions = paths.map((filePath) =>
+        serializeComposerFileLink(
+          resolveDiffPathForWorkspace({ filePath, workspaceRoot: cwd, repositoryRoot }) ??
+            joinHostPath(root, filePath),
+        ),
+      );
+      const composer = composerRef?.current;
+      const inserted = composer?.insertTextAtEnd(`${mentions.join(" ")} `, {
+        ensureLeadingBoundary: true,
+      });
+      if (!inserted) {
+        toastManager.add({
+          type: "error",
+          title: "Unable to add to chat",
+          description: composer
+            ? "The chat isn't ready to accept input right now."
+            : "Open a chat for this project and try again.",
+        });
+      }
+    } else if (clicked === "move") {
+      await move(list, files);
+    } else if (clicked === "discard") {
+      await discard(discardable);
+    }
+  };
+
   const onDragStart = (list: StagingListKind, row: StagingRow, event: DragEvent) => {
     const inSelection = selection !== null && isRowSelected(list, row.key);
     const keys = inSelection ? [...selection.keys] : [row.key];
@@ -347,6 +455,7 @@ export function StagingPanel(props: {
         onDoubleClick={() => void move(list, rowFiles(row))}
         onKeyDown={(event) => onRowKeyDown(list, row, event)}
         onDragStart={(event) => onDragStart(list, row, event)}
+        onContextMenu={(event) => void onRowContextMenu(list, row, event)}
       >
         {Array.from({ length: row.depth }, (_, level) => (
           <span

@@ -55,6 +55,7 @@ interface RightPanelPullRequestProps {
 interface RightPanelFileProps {
   readonly projectName: string | null;
   readonly workspaceRoot: string | undefined;
+  readonly repositoryRoot: string | undefined;
   readonly availableEditors: ReadonlyArray<EditorId>;
   readonly pendingSurfaceIds: ReadonlySet<string>;
   readonly onOpenFile: (relativePath: string) => void;
@@ -175,7 +176,12 @@ export function RightPanelSurfaceContent(props: {
     case "staging":
       return (
         <Suspense fallback={null}>
-          <StagingPanel environmentId={props.environmentId} cwd={props.gitCwd} visible={visible} />
+          <StagingPanel
+            environmentId={props.environmentId}
+            cwd={props.gitCwd}
+            repositoryRoot={props.files.repositoryRoot}
+            visible={visible}
+          />
         </Suspense>
       );
     case "side-chat":

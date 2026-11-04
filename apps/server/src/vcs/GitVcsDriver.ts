@@ -359,6 +359,8 @@ export class GitVcsDriver extends Context.Service<
     ) => Effect.Effect<VcsStagingStatusResult, GitCommandError>;
     readonly stagePaths: (input: VcsStagingPathsInput) => Effect.Effect<void, GitCommandError>;
     readonly unstagePaths: (input: VcsStagingPathsInput) => Effect.Effect<void, GitCommandError>;
+    /** Drops unstaged changes: tracked files return to the index, untracked files are deleted. */
+    readonly discardPaths: (input: VcsStagingPathsInput) => Effect.Effect<void, GitCommandError>;
     readonly readConfigValue: (
       cwd: string,
       key: string,

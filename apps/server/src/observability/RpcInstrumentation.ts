@@ -188,6 +188,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.vcsGetStagingStatus]: "vcs",
   [WS_METHODS.vcsStagePaths]: "vcs",
   [WS_METHODS.vcsUnstagePaths]: "vcs",
+  [WS_METHODS.vcsDiscardPaths]: "vcs",
   [WS_METHODS.reviewGetBranchCommits]: "review",
   [WS_METHODS.reviewGetDiffPreview]: "review",
   [WS_METHODS.reviewGetDiffFileContents]: "review",

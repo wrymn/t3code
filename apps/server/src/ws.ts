@@ -3136,6 +3136,8 @@ export const layerWsRpc = (
           gitWorkflow.stagePaths(input).pipe(Effect.ensuring(refreshLocalGitStatus(input.cwd))),
         [WS_METHODS.vcsUnstagePaths]: (input) =>
           gitWorkflow.unstagePaths(input).pipe(Effect.ensuring(refreshLocalGitStatus(input.cwd))),
+        [WS_METHODS.vcsDiscardPaths]: (input) =>
+          gitWorkflow.discardPaths(input).pipe(Effect.ensuring(refreshLocalGitStatus(input.cwd))),
         [WS_METHODS.reviewGetDiffFileContents]: (input) => review.getDiffFileContents(input),
         [WS_METHODS.terminalOpen]: (input) => terminalManager.open(input),
         [WS_METHODS.terminalAttach]: (input, metadata) =>

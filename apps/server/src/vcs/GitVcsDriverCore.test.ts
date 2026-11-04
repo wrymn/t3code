@@ -5942,6 +5942,36 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("discards unstaged changes and keeps staged ones", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const pathService = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* writeTextFile(cwd, "README.md", "staged\n");
+        yield* driver.stagePaths({ cwd, paths: ["README.md"] });
+        yield* writeTextFile(cwd, "README.md", "staged then edited\n");
+        yield* writeTextFile(cwd, "nested/new[1].txt", "untracked\n");
+        yield* writeTextFile(cwd, "nested/new1.txt", "kept\n");
+        yield* writeTextFile(cwd, "outside.txt", "untracked outside cwd\n");
+
+        yield* driver.discardPaths({
+          cwd: pathService.join(cwd, "nested"),
+          paths: ["README.md", "nested/new[1].txt", "outside.txt"],
+        });
+
+        assert.equal(
+          yield* fileSystem.readFileString(pathService.join(cwd, "README.md")),
+          "staged\n",
+        );
+        assert.equal(
+          yield* git(cwd, ["status", "--porcelain", "--untracked-files=all"]),
+          "M  README.md\n?? nested/new1.txt",
+        );
+      }),
+    );
+
     it.effect("unstages without a commit and keeps edits made after staging", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

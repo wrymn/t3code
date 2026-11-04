@@ -82,6 +82,7 @@ export class GitWorkflowService extends Context.Service<
     ) => Effect.Effect<VcsStagingStatusResult, GitCommandError>;
     readonly stagePaths: (input: VcsStagingPathsInput) => Effect.Effect<void, GitCommandError>;
     readonly unstagePaths: (input: VcsStagingPathsInput) => Effect.Effect<void, GitCommandError>;
+    readonly discardPaths: (input: VcsStagingPathsInput) => Effect.Effect<void, GitCommandError>;
     readonly createWorktree: (
       input: VcsCreateWorktreeInput,
       options?: GitVcsDriver.CreateWorktreeOptions,
@@ -477,6 +478,11 @@ export const make = Effect.gen(function* () {
     unstagePaths: Effect.fn("GitWorkflowService.unstagePaths")(function (input) {
       return ensureGitCommand("GitWorkflowService.unstagePaths", input.cwd).pipe(
         Effect.andThen(git.unstagePaths(input)),
+      );
+    }),
+    discardPaths: Effect.fn("GitWorkflowService.discardPaths")(function (input) {
+      return ensureGitCommand("GitWorkflowService.discardPaths", input.cwd).pipe(
+        Effect.andThen(git.discardPaths(input)),
       );
     }),
     removeWorktree: Effect.fn("GitWorkflowService.removeWorktree")(function (input) {

@@ -3951,6 +3951,43 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     yield* executeGit("GitVcsDriver.unstagePaths", input.cwd, args, { stdin: pathspec.stdin });
   });
 
+  const discardPaths: GitVcsDriver.GitVcsDriver["Service"]["discardPaths"] = Effect.fn(
+    "discardPaths",
+  )(function* (input) {
+    // restore fails on a path git does not track, so untracked files go to clean instead.
+    const listed = yield* executeGit(
+      "GitVcsDriver.discardPaths.untracked",
+      input.cwd,
+      ["ls-files", "-z", "--full-name", "--others", "--exclude-standard", "--", ":/"],
+      { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
+    );
+    const untrackedInRepo = new Set(listed.stdout.split("\0"));
+    const untracked = input.paths.filter((path) => untrackedInRepo.has(path));
+    const tracked = input.paths.filter((path) => !untrackedInRepo.has(path));
+    if (tracked.length > 0) {
+      const pathspec = stagingPathspecArgs(tracked);
+      yield* executeGit(
+        "GitVcsDriver.discardPaths.restore",
+        input.cwd,
+        ["restore", "--worktree", ...pathspec.args],
+        { stdin: pathspec.stdin },
+      );
+    }
+    // clean never leaves its cwd, so it runs from the root. It has no --pathspec-from-file;
+    // chunks keep each command line under Windows' limit.
+    const root = untracked.length > 0 ? ((yield* readWorktreeRoot(input.cwd)) ?? input.cwd) : "";
+    for (let start = 0; start < untracked.length; start += 100) {
+      const chunk = untracked.slice(start, start + 100);
+      yield* executeGit("GitVcsDriver.discardPaths.clean", root, [
+        "clean",
+        "--force",
+        "--quiet",
+        "--",
+        ...chunk.map((path) => `:(top,literal)${path}`),
+      ]);
+    }
+  });
+
   const readConfigValue: GitVcsDriver.GitVcsDriver["Service"]["readConfigValue"] = (cwd, key) =>
     runGitStdout("GitVcsDriver.readConfigValue", cwd, ["config", "--get", key], true).pipe(
       Effect.map((stdout) => stdout.trim()),
@@ -5248,6 +5285,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     getStagingStatus,
     stagePaths,
     unstagePaths,
+    discardPaths,
     readConfigValue,
     readBranchBase,
     resolveBranchName,
