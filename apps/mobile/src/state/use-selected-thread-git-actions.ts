@@ -7,6 +7,7 @@ import {
   type GitActionRequestInput,
   type VcsActionOperation,
   type VcsRef,
+  isVcsActionHookRejectedError,
 } from "@t3tools/client-runtime/state/vcs";
 import {
   AuthOrchestrationOperateScope,
@@ -199,6 +200,8 @@ export function useSelectedThreadGitActions() {
         : await vcsActionManager.track(appAtomRegistry, target, { operation, label }, run);
     if (AsyncResult.isFailure(result)) {
       const error = Cause.squash(result.cause);
+      // The hook failure sheet reports this one with its output.
+      if (isVcsActionHookRejectedError(error)) return null;
       const message = error instanceof Error ? error.message : "Git action failed.";
       setPendingConnectionError(message);
       showGitActionResult({ type: "error", title: "Git action failed", description: message });
@@ -373,6 +376,15 @@ export function useSelectedThreadGitActions() {
           threadId: thread.id,
         });
         if (AsyncResult.isFailure(result)) {
+          if (input.featureBranch && isVcsActionHookRejectedError(Cause.squash(result.cause))) {
+            const status = await refreshStatus({
+              environmentId: thread.environmentId,
+              input: { cwd, localOnly: true },
+            });
+            if (AsyncResult.isSuccess(status)) {
+              await updateThreadGitContext(thread, { branch: status.value.refName });
+            }
+          }
           return result;
         }
 

@@ -574,6 +574,7 @@ function runStackedAction(
     featureBranch?: boolean;
     filePaths?: readonly string[];
     stagedOnly?: boolean;
+    noVerify?: boolean;
   },
   options?: Parameters<GitManager.GitManager["Service"]["runStackedAction"]>[1],
 ) {
@@ -3186,10 +3187,42 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }).pipe(Effect.result);
       expect(Result.isFailure(mixed)).toBe(true);
 
+      const hookPath = NodePath.join(repoDir, ".git/hooks/pre-commit");
+      NodeFS.writeFileSync(
+        hookPath,
+        "#!/bin/sh\nprintf 'Naming validation failed\\n' >&2\nexit 1\n",
+      );
+      NodeFS.chmodSync(hookPath, 0o755);
+      const events: GitActionProgressEvent[] = [];
+      const rejected = yield* runStackedAction(
+        manager,
+        { cwd: repoDir, action: "commit", stagedOnly: true },
+        {
+          actionId: "hook-rejection",
+          progressReporter: {
+            publish: (event) => Effect.sync(() => void events.push(event)),
+          },
+        },
+      ).pipe(Effect.result);
+      expect(Result.isFailure(rejected)).toBe(true);
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "phase_started",
+            phase: "commit",
+            commitMessage: "Add a",
+          }),
+          expect.objectContaining({ kind: "hook_output", text: "Naming validation failed" }),
+          expect.objectContaining({ kind: "hook_finished", hookName: "pre-commit", exitCode: 1 }),
+          expect.objectContaining({ kind: "action_failed", phase: "commit" }),
+        ]),
+      );
       const result = yield* runStackedAction(manager, {
         cwd: repoDir,
         action: "commit",
         stagedOnly: true,
+        commitMessage: "Add a",
+        noVerify: true,
       });
 
       expect(result.commit.status).toBe("created");

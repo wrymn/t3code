@@ -7,6 +7,7 @@ import {
 import {
   changeRequestTerminologyFor,
   requiresDefaultBranchConfirmation,
+  isVcsActionHookRejectedError,
   VcsActionRemoteFailureError,
 } from "@t3tools/client-runtime/state/vcs";
 import type {
@@ -335,6 +336,8 @@ export function StagingPanel(props: {
       if (cwd !== null) void refreshStatus({ environmentId, input: { cwd } });
       if (isAtomCommandInterrupted(result)) return;
       const error = squashAtomCommandFailure(result);
+      // The hook failure dialog reports this one with its output.
+      if (isVcsActionHookRejectedError(error)) return;
       const phase = isRemoteActionFailure(error) ? error.phase : null;
       toastManager.add({
         type: "error",

@@ -2160,6 +2160,7 @@ export const make = Effect.gen(function* () {
     selection?: GitVcsDriver.GitCommitSelection,
     progressReporter?: GitActionProgressReporter,
     actionId?: string,
+    noVerify?: boolean,
   ) {
     const emit = (event: GitActionProgressPayload) =>
       progressReporter && actionId
@@ -2197,6 +2198,7 @@ export const make = Effect.gen(function* () {
       kind: "phase_started",
       phase: "commit",
       label: "Committing...",
+      commitMessage: suggestion.commitMessage,
     });
 
     let currentHookName: string | null = null;
@@ -2245,6 +2247,7 @@ export const make = Effect.gen(function* () {
         : null;
     const { commitSha } = yield* gitCore.commit(cwd, suggestion.subject, suggestion.body, {
       timeoutMs: COMMIT_TIMEOUT_MS,
+      ...(noVerify ? { noVerify: true } : {}),
       ...(selection === "staged"
         ? suggestion.indexTree === undefined
           ? {}
@@ -3259,6 +3262,7 @@ export const make = Effect.gen(function* () {
                   commitSelection,
                   options?.progressReporter,
                   progress.actionId,
+                  input.noVerify,
                 ),
               ),
             )

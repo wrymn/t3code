@@ -20,6 +20,7 @@ import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
+import { GitHookFailureDialogHost } from "../components/GitHookFailureDialog";
 import { DevReplayHost } from "../components/DevReplayHost";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
@@ -208,6 +209,7 @@ function RootRouteBranch() {
         <SnapShotCoordinator />
         <ReopenClosedViewShortcut />
         <ConfirmDialogHost />
+        <GitHookFailureDialogHost />
         <CustomSnoozeDialogHost />
         <GuestShareDialogHost />
         <ProjectCloneToastCoordinator />
