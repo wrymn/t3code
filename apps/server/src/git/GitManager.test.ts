@@ -577,6 +577,7 @@ function runStackedAction(
     commitMessage?: string;
     featureBranch?: boolean;
     filePaths?: readonly string[];
+    noVerify?: boolean;
   },
   options?: Parameters<GitManager.GitManager["Service"]["runStackedAction"]>[1],
 ) {
@@ -3256,6 +3257,59 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       );
       expect(statusStdout).toContain("b.txt");
       expect(statusStdout).not.toContain("a.txt");
+    }),
+  );
+
+  it.effect("retries a hook-rejected commit without verification when asked", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "a.txt"), "file a\n");
+      const hookPath = NodePath.join(repoDir, ".git/hooks/pre-commit");
+      NodeFS.writeFileSync(
+        hookPath,
+        "#!/bin/sh\nprintf 'Naming validation failed\\n' >&2\nexit 1\n",
+      );
+      NodeFS.chmodSync(hookPath, 0o755);
+
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitMessage: () => Effect.succeed({ subject: "Add a", body: "" }),
+        },
+      });
+      const events: GitActionProgressEvent[] = [];
+      const rejected = yield* runStackedAction(
+        manager,
+        { cwd: repoDir, action: "commit" },
+        {
+          actionId: "hook-rejection",
+          progressReporter: {
+            publish: (event) => Effect.sync(() => void events.push(event)),
+          },
+        },
+      ).pipe(Effect.result);
+      expect(Result.isFailure(rejected)).toBe(true);
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "phase_started",
+            phase: "commit",
+            commitMessage: "Add a",
+          }),
+          expect.objectContaining({ kind: "hook_output", text: "Naming validation failed" }),
+          expect.objectContaining({ kind: "action_failed", phase: "commit" }),
+        ]),
+      );
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        commitMessage: "Add a",
+        noVerify: true,
+      });
+      expect(result.commit.status).toBe("created");
+      const committed = yield* runGit(repoDir, ["show", "--pretty=", "--name-only", "HEAD"]);
+      expect(committed.stdout.trim()).toBe("a.txt");
     }),
   );
 

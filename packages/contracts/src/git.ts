@@ -133,6 +133,8 @@ export const GitRunStackedActionInput = Schema.Struct({
   commitMessage: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
   featureBranch: Schema.optional(Schema.Boolean),
   filePaths: Schema.optional(Schema.Array(GitFilePath).check(Schema.isMinLength(1))),
+  /** Skips pre-commit and commit-msg verification for this commit attempt only. */
+  noVerify: Schema.optional(Schema.Boolean),
   threadId: Schema.optional(ThreadId),
   projectId: Schema.optional(ProjectId),
 });
@@ -453,6 +455,8 @@ const GitActionPhaseStartedEvent = Schema.Struct({
   kind: Schema.Literal("phase_started"),
   phase: GitActionProgressPhase,
   label: TrimmedNonEmptyStringSchema,
+  /** Resolved message when committing, allowing a failed attempt to be retried unchanged. */
+  commitMessage: Schema.optional(Schema.String),
 });
 const GitActionHookStartedEvent = Schema.Struct({
   ...GitActionProgressBase.fields,

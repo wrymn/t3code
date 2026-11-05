@@ -6,6 +6,7 @@ import {
   ThreadId,
   ProjectId,
   WS_METHODS,
+  GitCommandError,
   type GitActionProgressEvent,
   type GitRunStackedActionInput,
   type GitRunStackedActionResult,
@@ -32,14 +33,19 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import type { AtomCommandResult } from "./runtime.ts";
 import {
+  appendVcsHookTranscript,
   applyVcsActionProgressEvent,
   beginVcsActionState,
   consumeVcsActionProgress,
   createVcsActionManager,
   createVcsActionTransportId,
   EMPTY_VCS_ACTION_STATE,
+  EMPTY_VCS_HOOK_TRANSCRIPT,
   normalizeVcsActionProgressEvent,
   parseVcsActionTargetKey,
+  VCS_HOOK_TRANSCRIPT_MAX_CHARS,
+  VCS_HOOK_TRANSCRIPT_MAX_LINES,
+  VcsActionHookRejectedError,
   VcsActionMissingTerminalEventError,
   VcsActionRemoteFailureError,
   VcsActionTargetKeyParseError,
@@ -115,6 +121,66 @@ function cacheStore(onClearVcsRefs: (environmentId: EnvironmentId) => void) {
   });
 }
 
+function stackedActionHarness(
+  respond: (input: GitRunStackedActionInput) => Stream.Stream<GitActionProgressEvent>,
+) {
+  return Effect.gen(function* () {
+    const connectionState: SupervisorConnectionState = {
+      ...AVAILABLE_CONNECTION_STATE,
+      desired: true,
+      network: "online",
+      phase: "connected",
+      attempt: 1,
+      generation: 1,
+    };
+    const rpcInputs = new Array<GitRunStackedActionInput>();
+    const client = {
+      [WS_METHODS.gitRunStackedAction]: (input: GitRunStackedActionInput) => {
+        rpcInputs.push(input);
+        return respond(input);
+      },
+    } as unknown as WsRpcProtocolClient;
+    const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+      target,
+      state: yield* SubscriptionRef.make(connectionState),
+      session: yield* SubscriptionRef.make(Option.some(session(client))),
+      prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+      connect: Effect.void,
+      disconnect: Effect.void,
+      retryNow: Effect.void,
+    } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+    const run: EnvironmentRegistry.EnvironmentRegistry["Service"]["run"] = (
+      _environmentId,
+      effect,
+    ) => Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+    const runStream: EnvironmentRegistry.EnvironmentRegistry["Service"]["runStream"] = (
+      _environmentId,
+      stream,
+    ) => Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+    const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+      run,
+      runStream,
+    } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+    const removed = new Array<string>();
+    const runtime = Atom.runtime(
+      Layer.merge(
+        Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+        Layer.succeed(
+          Persistence.EnvironmentCacheStore,
+          cacheStore((removedEnvironmentId) => {
+            removed.push(`${removedEnvironmentId}:*`);
+          }),
+        ),
+      ),
+    );
+    const manager = createVcsActionManager(runtime);
+    const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+      Effect.sync(() => registry.dispose()),
+    );
+    return { manager, registry, rpcInputs, removed };
+  });
+}
+
 describe("vcsActionState", () => {
   it("preserves malformed target key diagnostics and the native cause without copying the key", () => {
     const key = "not-json-with-credential=do-not-log";
@@ -147,10 +213,23 @@ describe("vcsActionState", () => {
         kind: "phase_started",
         phase: "commit",
         label: "Committing...",
+        commitMessage: "Generated subject\n\nGenerated body",
+      }),
+    );
+    const early = applyVcsActionProgressEvent(
+      phase,
+      progress({
+        actionId,
+        action,
+        cwd,
+        kind: "hook_output",
+        hookName: null,
+        stream: "stderr",
+        text: "\u001b[31mprinted before trace2\u001b[0m\u0007",
       }),
     );
     const hook = applyVcsActionProgressEvent(
-      phase,
+      early,
       progress({
         actionId,
         action,
@@ -198,7 +277,37 @@ describe("vcsActionState", () => {
       currentLabel: "Committing...",
       hookName: null,
       lastOutputLine: null,
+      commitMessage: "Generated subject\n\nGenerated body",
+      hookTranscript: { lines: ["printed before trace2", "hook output"], droppedLines: 0 },
     });
+    expect(
+      applyVcsActionProgressEvent(
+        finished,
+        progress({
+          actionId,
+          action,
+          cwd,
+          kind: "phase_started",
+          phase: "push",
+          label: "Pushing...",
+        }),
+      ).hookTranscript,
+    ).toEqual(EMPTY_VCS_HOOK_TRANSCRIPT);
+  });
+
+  it("keeps the newest hook output within the line and character bounds", () => {
+    let transcript = EMPTY_VCS_HOOK_TRANSCRIPT;
+    for (let line = 1; line <= VCS_HOOK_TRANSCRIPT_MAX_LINES + 50; line += 1) {
+      transcript = appendVcsHookTranscript(transcript, `line ${line}`);
+    }
+    expect(transcript.lines).toHaveLength(VCS_HOOK_TRANSCRIPT_MAX_LINES);
+    expect(transcript.lines[0]).toBe("line 51");
+    expect(transcript.droppedLines).toBe(50);
+
+    const huge = appendVcsHookTranscript(transcript, "x".repeat(VCS_HOOK_TRANSCRIPT_MAX_CHARS * 2));
+    expect(huge.lines).toEqual(["x".repeat(VCS_HOOK_TRANSCRIPT_MAX_CHARS)]);
+    expect(huge.chars).toBe(VCS_HOOK_TRANSCRIPT_MAX_CHARS);
+    expect(huge.droppedLines).toBe(50 + VCS_HOOK_TRANSCRIPT_MAX_LINES);
   });
 
   it("ignores progress after a newer action owns the target", () => {
@@ -340,6 +449,73 @@ describe("vcsActionState", () => {
     }),
   );
 
+  it.effect("reports a gating hook rejection without copying its output", () =>
+    Effect.gen(function* () {
+      const target = { environmentId, cwd };
+      const transportActionId = createVcsActionTransportId(target, actionId);
+      const consume = (hookName: string, phase: "commit" | "push") =>
+        consumeVcsActionProgress(
+          Stream.fromIterable<GitActionProgressEvent>([
+            {
+              actionId: transportActionId,
+              action,
+              cwd,
+              kind: "phase_started",
+              phase: "commit",
+              label: "Committing...",
+            },
+            {
+              actionId: transportActionId,
+              action,
+              cwd,
+              kind: "hook_output",
+              hookName,
+              stream: "stderr",
+              text: "secret=do-not-log",
+            },
+            {
+              actionId: transportActionId,
+              action,
+              cwd,
+              kind: "hook_finished",
+              hookName,
+              exitCode: 1,
+              durationMs: 4,
+            },
+            {
+              actionId: transportActionId,
+              action,
+              cwd,
+              kind: "action_failed",
+              phase,
+              message: "hook failed secret=do-not-log",
+            },
+          ]).pipe(
+            Stream.concat(
+              Stream.fail(
+                new GitCommandError({
+                  operation: "commit",
+                  command: "git",
+                  cwd,
+                  detail: "Git command failed",
+                }),
+              ),
+            ),
+          ),
+          { target, transportActionId, actionId, action, onProgress: () => Effect.void },
+        ).pipe(Effect.flip);
+
+      const rejected = yield* consume("pre-commit", "commit");
+      expect(rejected).toBeInstanceOf(VcsActionHookRejectedError);
+      expect(rejected).toMatchObject({ hookName: "pre-commit", exitCode: 1, environmentId, cwd });
+      expect(rejected.message).toBe("The pre-commit hook rejected the commit (exit code 1).");
+      expect(JSON.stringify(rejected)).not.toContain("do-not-log");
+
+      expect(yield* consume("post-commit", "commit")).toBeInstanceOf(VcsActionRemoteFailureError);
+      expect(yield* consume("pre-commit", "push")).toBeInstanceOf(VcsActionRemoteFailureError);
+    }),
+  );
+
   it.effect("reports a missing terminal event as a protocol failure", () =>
     Effect.gen(function* () {
       const target = { environmentId, cwd };
@@ -435,14 +611,6 @@ describe("vcsActionState", () => {
   it.effect("invalidates persisted refs after successful and failed stacked actions", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const connectionState: SupervisorConnectionState = {
-          ...AVAILABLE_CONNECTION_STATE,
-          desired: true,
-          network: "online",
-          phase: "connected",
-          attempt: 1,
-          generation: 1,
-        };
         const targetKey = { environmentId, cwd };
         const successfulActionId = "invalidate-success";
         const failedActionId = "invalidate-failure";
@@ -456,68 +624,29 @@ describe("vcsActionState", () => {
           targetKey,
           interruptedActionId,
         );
-        const rpcInputs = new Array<GitRunStackedActionInput>();
-        const client = {
-          [WS_METHODS.gitRunStackedAction]: (input: GitRunStackedActionInput) =>
-            (rpcInputs.push(input), input.actionId === successfulTransportActionId)
-              ? Stream.make(
+        const { manager, registry, rpcInputs, removed } = yield* stackedActionHarness((input) =>
+          input.actionId === successfulTransportActionId
+            ? Stream.make(
+                progress({
+                  kind: "action_finished",
+                  actionId: successfulTransportActionId,
+                  cwd,
+                  action,
+                  result,
+                }),
+              )
+            : input.actionId === interruptedTransportActionId
+              ? Stream.fromEffect(Effect.interrupt)
+              : Stream.make(
                   progress({
-                    kind: "action_finished",
-                    actionId: successfulTransportActionId,
+                    kind: "action_failed",
+                    actionId: failedTransportActionId,
                     cwd,
                     action,
-                    result,
+                    phase: "push",
+                    message: "push failed after creating the branch",
                   }),
-                )
-              : input.actionId === interruptedTransportActionId
-                ? Stream.fromEffect(Effect.interrupt)
-                : Stream.make(
-                    progress({
-                      kind: "action_failed",
-                      actionId: failedTransportActionId,
-                      cwd,
-                      action,
-                      phase: "push",
-                      message: "push failed after creating the branch",
-                    }),
-                  ),
-        } as unknown as WsRpcProtocolClient;
-        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
-          target,
-          state: yield* SubscriptionRef.make(connectionState),
-          session: yield* SubscriptionRef.make(Option.some(session(client))),
-          prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
-          connect: Effect.void,
-          disconnect: Effect.void,
-          retryNow: Effect.void,
-        } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
-        const run: EnvironmentRegistry.EnvironmentRegistry["Service"]["run"] = (
-          _environmentId,
-          effect,
-        ) => Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
-        const runStream: EnvironmentRegistry.EnvironmentRegistry["Service"]["runStream"] = (
-          _environmentId,
-          stream,
-        ) => Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
-        const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
-          run,
-          runStream,
-        } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
-        const removed = new Array<string>();
-        const runtime = Atom.runtime(
-          Layer.merge(
-            Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
-            Layer.succeed(
-              Persistence.EnvironmentCacheStore,
-              cacheStore((removedEnvironmentId) => {
-                removed.push(`${removedEnvironmentId}:*`);
-              }),
-            ),
-          ),
-        );
-        const manager = createVcsActionManager(runtime);
-        const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
-          Effect.sync(() => registry.dispose()),
+                ),
         );
         const state = vcsRefsCacheStateAtom({ environmentId });
 
@@ -555,6 +684,7 @@ describe("vcsActionState", () => {
           actionId: failedActionId,
           error: "Source control action 'commit_push' failed during push.",
         });
+        expect(registry.get(manager.hookFailureAtom)).toBeNull();
         expect(registry.get(state).revision).toBe(2);
         expect(removed).toEqual([`${environmentId}:*`, `${environmentId}:*`]);
 
@@ -572,6 +702,118 @@ describe("vcsActionState", () => {
         expect(registry.get(manager.stateAtom(targetKey))).toEqual(EMPTY_VCS_ACTION_STATE);
         expect(registry.get(state).revision).toBe(3);
         expect(removed).toEqual([`${environmentId}:*`, `${environmentId}:*`, `${environmentId}:*`]);
+      }),
+    ),
+  );
+  it.effect("retains a hook rejection for one-shot retries on its original target", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const targetKey = { environmentId, cwd };
+        const threadId = ThreadId.make("thread-hook-retry");
+        const outcomes = ["reject", "reject", "succeed", "reject", "succeed", "reject"];
+        let attempt = 0;
+        const { manager, registry, rpcInputs } = yield* stackedActionHarness((input) => {
+          const base = { actionId: input.actionId, cwd, action: input.action };
+          attempt += 1;
+          if (outcomes.shift() === "succeed") {
+            return Stream.make(progress({ ...base, kind: "action_finished", result }));
+          }
+          return Stream.fromIterable<GitActionProgressEvent>([
+            {
+              ...base,
+              kind: "phase_started",
+              phase: "commit",
+              label: "Committing...",
+              commitMessage: "Resolved subject",
+            },
+            {
+              ...base,
+              kind: "hook_output",
+              hookName: null,
+              stream: "stdout",
+              text: "checking assets",
+            },
+            { ...base, kind: "hook_started", hookName: "pre-commit" },
+            {
+              ...base,
+              kind: "hook_output",
+              hookName: "pre-commit",
+              stream: "stderr",
+              text: `attempt ${attempt}`,
+            },
+            { ...base, kind: "hook_finished", hookName: "pre-commit", exitCode: 2, durationMs: 3 },
+            { ...base, kind: "action_failed", phase: "commit", message: "pre-commit failed" },
+          ]);
+        });
+        const runFresh = (id: string) =>
+          Effect.promise(() =>
+            manager.runStackedAction(targetKey).run(registry, {
+              actionId: id,
+              action,
+              featureBranch: true,
+              filePaths: ["src/a.ts"],
+              threadId,
+            }),
+          );
+        const retry = (id: string, noVerify: boolean) =>
+          Effect.promise(() => manager.retryHookFailure(registry, { actionId: id, noVerify }));
+
+        const rejected = yield* runFresh("hook-first");
+        expect(AsyncResult.isFailure(rejected) && Cause.squash(rejected.cause)).toBeInstanceOf(
+          VcsActionHookRejectedError,
+        );
+        expect(registry.get(manager.hookFailureAtom)).toEqual({
+          target: targetKey,
+          actionId: "hook-first",
+          action,
+          hookName: "pre-commit",
+          exitCode: 2,
+          transcript: { lines: ["checking assets", "attempt 1"], chars: 24, droppedLines: 0 },
+          canSkipVerification: true,
+          commitMessage: "Resolved subject",
+          filePaths: ["src/a.ts"],
+          threadId,
+          projectId: null,
+          pendingRetry: null,
+        });
+
+        yield* retry("hook-bypass", true);
+        expect(rpcInputs[1]).toEqual({
+          actionId: createVcsActionTransportId(targetKey, "hook-bypass"),
+          cwd,
+          action,
+          commitMessage: "Resolved subject",
+          filePaths: ["src/a.ts"],
+          noVerify: true,
+          threadId,
+        });
+        expect(registry.get(manager.hookFailureAtom)).toMatchObject({
+          actionId: "hook-bypass",
+          transcript: { lines: ["checking assets", "attempt 2"] },
+          pendingRetry: null,
+        });
+
+        const retried = yield* retry("hook-retry", false);
+        expect(retried !== null && AsyncResult.isSuccess(retried)).toBe(true);
+        expect(rpcInputs[2]).not.toHaveProperty("noVerify");
+        expect(rpcInputs[2]).toMatchObject({
+          filePaths: ["src/a.ts"],
+          commitMessage: "Resolved subject",
+        });
+        expect(registry.get(manager.hookFailureAtom)).toBeNull();
+        expect(yield* retry("nothing-to-retry", false)).toBeNull();
+
+        yield* runFresh("hook-second");
+        expect(registry.get(manager.hookFailureAtom)).not.toBeNull();
+        yield* runFresh("fresh-success");
+        expect(rpcInputs[4]).not.toHaveProperty("noVerify");
+        expect(rpcInputs[4]).toMatchObject({ featureBranch: true, filePaths: ["src/a.ts"] });
+        expect(registry.get(manager.hookFailureAtom)).toBeNull();
+
+        yield* runFresh("hook-dismissed");
+        manager.dismissHookFailure(registry);
+        expect(registry.get(manager.hookFailureAtom)).toBeNull();
+        expect(rpcInputs).toHaveLength(6);
       }),
     ),
   );

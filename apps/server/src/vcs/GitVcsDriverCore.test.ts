@@ -6095,7 +6095,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             },
           })
           .pipe(Effect.result);
-        return { events, committed: Result.isSuccess(result) };
+        return { cwd, events, committed: Result.isSuccess(result) };
       });
 
     it.effect("reports each commit hook finishing with its exit code", () =>
@@ -6117,9 +6117,26 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
     it.effect("reports the exit code of a commit hook that rejects the commit", () =>
       Effect.gen(function* () {
-        const { events, committed } = yield* commitWithHooks({ "commit-msg": "exit 3" });
+        const { cwd, events, committed } = yield* commitWithHooks({
+          "pre-commit": "exit 0",
+          "commit-msg": "exit 3",
+        });
         assert.isFalse(committed);
-        assert.deepEqual(events, ["start commit-msg", "finish commit-msg 3"]);
+        assert.deepEqual(events, [
+          "start pre-commit",
+          "finish pre-commit 0",
+          "start commit-msg",
+          "finish commit-msg 3",
+        ]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.commit(cwd, "Add a", "", { noVerify: true });
+        assert.equal(yield* git(cwd, ["show", "HEAD:a.txt"]), "a");
+        yield* writeTextFile(cwd, "b.txt", "b\n");
+        const next = yield* driver
+          .commit(cwd, "Add b", "", { stage: { filePaths: ["b.txt"] } })
+          .pipe(Effect.result);
+        assert.isTrue(Result.isFailure(next));
+        assert.equal(yield* git(cwd, ["log", "-1", "--pretty=%s"]), "Add a");
       }),
     );
 

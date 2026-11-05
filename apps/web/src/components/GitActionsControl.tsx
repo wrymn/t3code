@@ -108,6 +108,7 @@ import { sourceControlEnvironment } from "~/state/sourceControl";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { vcsActionManager, vcsEnvironment, vcsStatusRevalidation } from "~/state/vcs";
+import { isVcsActionHookRejectedError } from "@t3tools/client-runtime/state/vcs";
 import { randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
@@ -1279,6 +1280,17 @@ export default function GitActionsControl({
       }
 
       const error = squashAtomCommandFailure(result);
+      // The hook failure dialog reports this one with its output.
+      if (isVcsActionHookRejectedError(error)) {
+        if (featureBranch && sourceControlScope.environmentId && sourceControlScope.cwd) {
+          const status = await refreshVcsStatus({
+            environmentId: sourceControlScope.environmentId,
+            input: { cwd: sourceControlScope.cwd, localOnly: true },
+          });
+          if (status._tag === "Success") persistThreadBranchSync(status.value.refName, true);
+        }
+        return;
+      }
       const errorToastTiming = resolveGitActionResultToastTiming("error");
       toastManager.add(
         stackedThreadToast({

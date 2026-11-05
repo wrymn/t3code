@@ -2181,6 +2181,7 @@ export const make = Effect.gen(function* () {
     filePaths?: readonly string[],
     progressReporter?: GitActionProgressReporter,
     actionId?: string,
+    noVerify?: boolean,
   ) {
     const emit = (event: GitActionProgressPayload) =>
       progressReporter && actionId
@@ -2218,6 +2219,7 @@ export const make = Effect.gen(function* () {
       kind: "phase_started",
       phase: "commit",
       label: "Committing...",
+      commitMessage: suggestion.commitMessage,
     });
 
     let currentHookName: string | null = null;
@@ -2266,6 +2268,7 @@ export const make = Effect.gen(function* () {
         : null;
     const { commitSha } = yield* gitCore.commit(cwd, suggestion.subject, suggestion.body, {
       timeoutMs: COMMIT_TIMEOUT_MS,
+      ...(noVerify ? { noVerify: true } : {}),
       stage: filePaths ? { filePaths } : {},
       ...(commitProgress ? { progress: commitProgress } : {}),
     });
@@ -3308,6 +3311,7 @@ export const make = Effect.gen(function* () {
                   input.filePaths,
                   options?.progressReporter,
                   progress.actionId,
+                  input.noVerify,
                 ),
               ),
             )

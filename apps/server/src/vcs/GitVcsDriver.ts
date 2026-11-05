@@ -163,6 +163,8 @@ export interface GitCommitProgress {
 }
 
 export interface GitCommitOptions {
+  /** Skips pre-commit and commit-msg hooks for this invocation without changing repository config. */
+  readonly noVerify?: boolean;
   readonly timeoutMs?: number;
   readonly progress?: GitCommitProgress;
   readonly stage?: { readonly filePaths?: readonly string[] };

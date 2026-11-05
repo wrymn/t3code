@@ -54,7 +54,41 @@ export interface VcsActionState {
   readonly lastOutputLine: string | null;
   readonly phaseStartedAtMs: number | null;
   readonly hookStartedAtMs: number | null;
+  /** Resolved message of the commit being attempted, kept so a rejected commit can be retried. */
+  readonly commitMessage: string | null;
+  /** Display-safe tail of hook output streamed during this action. Memory only, never persisted. */
+  readonly hookTranscript: VcsHookTranscript;
   readonly error: string | null;
+}
+
+/** Bounded, sanitized hook output. `droppedLines` counts older lines evicted to stay in bounds. */
+export interface VcsHookTranscript {
+  readonly lines: ReadonlyArray<string>;
+  readonly chars: number;
+  readonly droppedLines: number;
+}
+
+/** Context needed to retry a commit a hook rejected, against the target it originally ran on. */
+export interface VcsHookFailure {
+  readonly target: ResolvedVcsActionTarget;
+  readonly actionId: string;
+  readonly action: GitStackedAction;
+  readonly hookName: string;
+  readonly exitCode: number;
+  readonly transcript: VcsHookTranscript;
+  /** True when `git commit --no-verify` skips the failing hook (pre-commit and commit-msg). */
+  readonly canSkipVerification: boolean;
+  readonly commitMessage: string | null;
+  readonly filePaths: readonly string[] | null;
+  readonly threadId: ThreadId | null;
+  readonly projectId: ProjectId | null;
+  readonly pendingRetry: { readonly actionId: string; readonly noVerify: boolean } | null;
+}
+
+export interface RetryVcsHookFailureInput {
+  readonly actionId: string;
+  /** Skips pre-commit and commit-msg for this attempt only. */
+  readonly noVerify: boolean;
 }
 
 export interface VcsActionTarget {
@@ -79,6 +113,7 @@ export interface RunVcsStackedActionInput {
   readonly commitMessage?: string;
   readonly featureBranch?: boolean;
   readonly filePaths?: ReadonlyArray<string>;
+  readonly noVerify?: boolean;
   readonly threadId?: ThreadId;
   readonly projectId?: ProjectId;
   readonly onProgress?: (event: GitActionProgressEvent) => void;
@@ -115,6 +150,27 @@ export class VcsActionRemoteFailureError extends Schema.TaggedError<VcsActionRem
   }
 }
 
+/** A commit hook exited non-zero and git refused the commit. Carries no hook output. */
+export class VcsActionHookRejectedError extends Schema.TaggedError<VcsActionHookRejectedError>()(
+  "VcsActionHookRejectedError",
+  {
+    actionId: Schema.String,
+    transportActionId: Schema.String,
+    action: GitStackedAction,
+    environmentId: EnvironmentId,
+    cwd: Schema.String,
+    hookName: Schema.String,
+    exitCode: Schema.Int,
+  },
+) {
+  override get message(): string {
+    return `The ${this.hookName} hook rejected the commit (exit code ${this.exitCode}).`;
+  }
+}
+
+/** Schema-aware guard for surfaces that report hook rejections through the hook failure UI. */
+export const isVcsActionHookRejectedError = Schema.is(VcsActionHookRejectedError);
+
 export class VcsActionMissingTerminalEventError extends Schema.TaggedError<VcsActionMissingTerminalEventError>()(
   "VcsActionMissingTerminalEventError",
   {
@@ -144,9 +200,16 @@ export class VcsActionTargetKeyParseError extends Schema.TaggedError<VcsActionTa
 
 export const VcsActionExecutionError = Schema.Union([
   VcsActionRemoteFailureError,
+  VcsActionHookRejectedError,
   VcsActionMissingTerminalEventError,
 ]);
 export type VcsActionExecutionError = typeof VcsActionExecutionError.Type;
+
+export const EMPTY_VCS_HOOK_TRANSCRIPT = Object.freeze<VcsHookTranscript>({
+  lines: [],
+  chars: 0,
+  droppedLines: 0,
+});
 
 export const EMPTY_VCS_ACTION_STATE = Object.freeze<VcsActionState>({
   isRunning: false,
@@ -159,8 +222,49 @@ export const EMPTY_VCS_ACTION_STATE = Object.freeze<VcsActionState>({
   lastOutputLine: null,
   phaseStartedAtMs: null,
   hookStartedAtMs: null,
+  commitMessage: null,
+  hookTranscript: EMPTY_VCS_HOOK_TRANSCRIPT,
   error: null,
 });
+
+export const VCS_HOOK_TRANSCRIPT_MAX_LINES = 200;
+export const VCS_HOOK_TRANSCRIPT_MAX_CHARS = 32 * 1024;
+const COMMIT_GATING_HOOKS = new Set(["pre-commit", "prepare-commit-msg", "commit-msg"]);
+const NO_VERIFY_HOOKS = new Set(["pre-commit", "commit-msg"]);
+// CSI and OSC escape sequences, then any remaining C0/C1 controls except tab.
+const TERMINAL_CONTROL_PATTERN =
+  /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|\u001b[@-_]?|[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
+
+/** Strips ANSI escapes and terminal control characters so hook output renders as plain text. */
+function sanitizeVcsHookOutput(text: string): string {
+  return text.replace(TERMINAL_CONTROL_PATTERN, "").trimEnd();
+}
+
+/** Appends one output line, evicting the oldest lines past the line and character bounds. */
+export function appendVcsHookTranscript(
+  transcript: VcsHookTranscript,
+  text: string,
+): VcsHookTranscript {
+  const line = sanitizeVcsHookOutput(text).slice(0, VCS_HOOK_TRANSCRIPT_MAX_CHARS);
+  if (line.length === 0) {
+    return transcript;
+  }
+  const lines = [...transcript.lines, line];
+  let chars = transcript.chars + line.length;
+  let dropped = 0;
+  while (
+    lines.length - dropped > VCS_HOOK_TRANSCRIPT_MAX_LINES ||
+    chars > VCS_HOOK_TRANSCRIPT_MAX_CHARS
+  ) {
+    chars -= lines[dropped]!.length;
+    dropped += 1;
+  }
+  return {
+    lines: dropped === 0 ? lines : lines.slice(dropped),
+    chars,
+    droppedLines: transcript.droppedLines + dropped,
+  };
+}
 
 const nowMs = (): number => DateTime.toEpochMillis(DateTime.nowUnsafe());
 let nextLocalActionId = 0;
@@ -270,6 +374,7 @@ export function consumeVcsActionProgress<E, R>(
 ): Effect.Effect<GitRunStackedActionResult, E | VcsActionExecutionError, R> {
   return Effect.suspend(() => {
     let terminalEvent: GitActionProgressEvent | null = null;
+    let rejectingHook: { readonly hookName: string; readonly exitCode: number } | null = null;
     return stream.pipe(
       Stream.runForEach((event) => {
         const normalized = normalizeVcsActionProgressEvent(
@@ -283,12 +388,42 @@ export function consumeVcsActionProgress<E, R>(
         }
         if (normalized.kind === "action_finished" || normalized.kind === "action_failed") {
           terminalEvent = normalized;
+        } else if (normalized.kind === "phase_started") {
+          rejectingHook = null;
+        } else if (
+          normalized.kind === "hook_finished" &&
+          normalized.exitCode !== null &&
+          normalized.exitCode !== 0 &&
+          COMMIT_GATING_HOOKS.has(normalized.hookName)
+        ) {
+          rejectingHook = { hookName: normalized.hookName, exitCode: normalized.exitCode };
         }
         return input.onProgress(normalized);
       }),
+      // The RPC stream fails with the Git error after delivering its terminal failure event.
+      Effect.catch((error) =>
+        terminalEvent?.kind === "action_failed" ? Effect.void : Effect.fail(error),
+      ),
       Effect.flatMap(() => {
         if (terminalEvent?.kind === "action_finished") {
           return Effect.succeed(terminalEvent.result);
+        }
+        if (
+          terminalEvent?.kind === "action_failed" &&
+          terminalEvent.phase === "commit" &&
+          rejectingHook !== null
+        ) {
+          return Effect.fail<VcsActionExecutionError>(
+            new VcsActionHookRejectedError({
+              actionId: input.actionId,
+              transportActionId: input.transportActionId,
+              action: terminalEvent.action,
+              environmentId: input.target.environmentId,
+              cwd: input.target.cwd,
+              hookName: rejectingHook.hookName,
+              exitCode: rejectingHook.exitCode,
+            }),
+          );
         }
         if (terminalEvent?.kind === "action_failed") {
           return Effect.fail<VcsActionExecutionError>(
@@ -353,6 +488,8 @@ export function applyVcsActionProgressEvent(
         hookStartedAtMs: null,
         hookName: null,
         lastOutputLine: null,
+        ...(event.commitMessage !== undefined ? { commitMessage: event.commitMessage } : {}),
+        hookTranscript: EMPTY_VCS_HOOK_TRANSCRIPT,
         error: null,
       };
     case "hook_started":
@@ -376,6 +513,7 @@ export function applyVcsActionProgressEvent(
         action: event.action,
         operation: "run_change_request",
         lastOutputLine: event.text,
+        hookTranscript: appendVcsHookTranscript(current.hookTranscript, event.text),
         error: null,
       };
     case "hook_finished":
@@ -415,6 +553,12 @@ export function applyVcsActionProgressEvent(
 export function createVcsActionManager<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | Persistence.EnvironmentCacheStore | R, E>,
 ) {
+  // One rejected commit is surfaced at a time; it keeps its own target so switching projects or
+  // environments never retargets the retry.
+  const hookFailureAtom = Atom.make<VcsHookFailure | null>(null).pipe(
+    Atom.keepAlive,
+    Atom.withLabel("vcs-action:hook-failure"),
+  );
   const runStackedActionCommands = new Map<
     string,
     AtomCommand<RunVcsStackedActionInput, GitRunStackedActionResult, unknown>
@@ -456,6 +600,18 @@ export function createVcsActionManager<R, E>(
           });
         }
         const transportActionId = createVcsActionTransportId(target, input.actionId);
+        const ownsHookFailure = () => {
+          const failure = registry.get(hookFailureAtom);
+          return failure !== null && failure.pendingRetry?.actionId === input.actionId;
+        };
+        const priorFailure = registry.get(hookFailureAtom);
+        if (
+          priorFailure !== null &&
+          !ownsHookFailure() &&
+          getVcsActionTargetKey(priorFailure.target) === targetKey
+        ) {
+          registry.set(hookFailureAtom, null);
+        }
         registry.set(
           stateAtom,
           beginVcsActionState({
@@ -472,6 +628,7 @@ export function createVcsActionManager<R, E>(
           ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
           ...(input.featureBranch ? { featureBranch: true } : {}),
           ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
+          ...(input.noVerify ? { noVerify: true } : {}),
           ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
           ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
         };
@@ -511,10 +668,35 @@ export function createVcsActionManager<R, E>(
               createCommandPermissions(runtime, method).authorize(registry, id, payload),
           }),
           Effect.ensuring(invalidateCachedVcsRefs(registry, target)),
+          Effect.tap(() =>
+            Effect.sync(() => {
+              if (ownsHookFailure()) registry.set(hookFailureAtom, null);
+            }),
+          ),
           Effect.tap(() => clearOwnedState),
           Effect.tapError((error) =>
             Effect.sync(() => {
               const current = registry.get(stateAtom);
+              if (isVcsActionHookRejectedError(error)) {
+                const owned = current.actionId === input.actionId;
+                registry.set(hookFailureAtom, {
+                  target,
+                  actionId: input.actionId,
+                  action: input.action,
+                  hookName: error.hookName,
+                  exitCode: error.exitCode,
+                  transcript: owned ? current.hookTranscript : EMPTY_VCS_HOOK_TRANSCRIPT,
+                  canSkipVerification: NO_VERIFY_HOOKS.has(error.hookName),
+                  commitMessage:
+                    (owned ? current.commitMessage : null) ?? input.commitMessage ?? null,
+                  filePaths: input.filePaths?.length ? input.filePaths : null,
+                  threadId: input.threadId ?? null,
+                  projectId: input.projectId ?? null,
+                  pendingRetry: null,
+                });
+              } else if (ownsHookFailure()) {
+                registry.set(hookFailureAtom, null);
+              }
               if (current.actionId === input.actionId && current.isRunning) {
                 registry.set(
                   stateAtom,
@@ -523,7 +705,17 @@ export function createVcsActionManager<R, E>(
               }
             }),
           ),
-          Effect.onInterrupt(() => clearOwnedState),
+          Effect.onInterrupt(() =>
+            Effect.andThen(
+              Effect.sync(() => {
+                const failure = registry.get(hookFailureAtom);
+                if (failure !== null && ownsHookFailure()) {
+                  registry.set(hookFailureAtom, { ...failure, pendingRetry: null });
+                }
+              }),
+              clearOwnedState,
+            ),
+          ),
         );
       }),
     });
@@ -547,6 +739,41 @@ export function createVcsActionManager<R, E>(
   return {
     stateAtom: getVcsActionStateAtom,
     runStackedAction: (target: VcsActionTarget) => getRunStackedActionCommand(target),
+    /** The latest commit a hook rejected, with its transcript and retry context. */
+    hookFailureAtom,
+    /**
+     * Retries the rejected commit on its original target with the same message and file selection.
+     * The first attempt already created any feature branch, so the retry commits on it.
+     * Resolves to null when there is nothing to retry or a retry is already running.
+     */
+    retryHookFailure: async (
+      registry: AtomRegistry.AtomRegistry,
+      input: RetryVcsHookFailureInput,
+    ): Promise<AtomCommandResult<GitRunStackedActionResult, unknown> | null> => {
+      const failure = registry.get(hookFailureAtom);
+      if (failure === null || failure.pendingRetry !== null) {
+        return null;
+      }
+      registry.set(hookFailureAtom, {
+        ...failure,
+        pendingRetry: { actionId: input.actionId, noVerify: input.noVerify },
+      });
+      return getRunStackedActionCommand(failure.target).run(registry, {
+        actionId: input.actionId,
+        action: failure.action,
+        ...(failure.filePaths ? { filePaths: failure.filePaths } : {}),
+        ...(failure.commitMessage ? { commitMessage: failure.commitMessage } : {}),
+        ...(input.noVerify ? { noVerify: true } : {}),
+        ...(failure.threadId !== null ? { threadId: failure.threadId } : {}),
+        ...(failure.projectId !== null ? { projectId: failure.projectId } : {}),
+      });
+    },
+    /** Closes the hook failure unless a retry of it is still running. */
+    dismissHookFailure: (registry: AtomRegistry.AtomRegistry): void => {
+      if (registry.get(hookFailureAtom)?.pendingRetry === null) {
+        registry.set(hookFailureAtom, null);
+      }
+    },
     track: async <A, E>(
       registry: AtomRegistry.AtomRegistry,
       target: VcsActionTarget,
