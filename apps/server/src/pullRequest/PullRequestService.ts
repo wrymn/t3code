@@ -1546,16 +1546,20 @@ export const make = Effect.gen(function* () {
     const batches = (yield* Effect.all(reads, { concurrency: REPOSITORY_CONCURRENCY })).flat();
 
     const nextCursors: Record<string, string> = {};
+    const entries = new Map<string, PullRequestListEntry>();
     for (const batch of batches) {
       if (batch.nextCursor !== null) nextCursors[batch.key] = batch.nextCursor;
+      for (const entry of batch.entries) {
+        if (!entries.has(entry.url)) entries.set(entry.url, entry);
+      }
     }
 
     return {
       viewers: viewers as PullRequestListResult["viewers"],
       providers,
-      entries: batches
-        .flatMap((batch) => batch.entries)
-        .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+      entries: [...entries.values()].toSorted((left, right) =>
+        right.updatedAt.localeCompare(left.updatedAt),
+      ),
       errors: [...unreadable, ...batches.flatMap((batch) => batch.errors)],
       truncated: batches.some((batch) => batch.truncated),
       nextCursors,
