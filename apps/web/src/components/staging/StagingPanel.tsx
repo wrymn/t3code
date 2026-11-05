@@ -19,10 +19,14 @@ import {
   ChevronDown,
   ChevronsDownIcon,
   ChevronsUpIcon,
+  FlaskConicalOffIcon,
   FolderTreeIcon,
+  PilcrowIcon,
   SearchIcon,
+  TextWrapIcon,
 } from "lucide-react";
 import { Schema } from "effect";
+import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import {
   useRef,
@@ -38,6 +42,7 @@ import { flushSync } from "react-dom";
 import { PierreEntryIcon } from "~/components/chat/PierreEntryIcon";
 import { StartTruncatedPath } from "~/components/StartTruncatedPath";
 import { AnnotatableCodeView } from "~/components/diffs/AnnotatableCodeView";
+import { useHideTestFiles } from "~/components/diffs/useHideTestFiles";
 import type { DraftId } from "~/composerDraftStore";
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
@@ -51,6 +56,7 @@ import { useFileContextMenu, type FileContextMenuAction } from "~/fileContextMen
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { readLocalApi } from "~/localApi";
+import { useClientSettings } from "~/hooks/useSettings";
 import { useRenderedAppearance } from "~/hooks/useTheme";
 import {
   buildFileDiffContentVersion,
@@ -149,6 +155,13 @@ export function StagingPanel(props: {
     "list",
     StagingViewSchema,
   );
+  const settings = useClientSettings((settings) => ({
+    diffIgnoreWhitespace: settings.diffIgnoreWhitespace,
+    wordWrap: settings.wordWrap,
+  }));
+  const [wordWrap, setWordWrap] = useState(settings.wordWrap);
+  const [diffIgnoreWhitespace, setDiffIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
+  const [hideTestFiles, setHideTestFiles] = useHideTestFiles();
   const [filter, setFilter] = useState<string | null>(null);
   const filterInputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -193,12 +206,20 @@ export function StagingPanel(props: {
     moved.paths.has(file.path);
   const query = filter?.trim().toLowerCase() ?? "";
   const matches = (file: VcsStagingFile) => query === "" || file.path.toLowerCase().includes(query);
-  // Everything that acts on rows, including folder moves and select-all, sees only matches.
+  const testFileCount = new Set(
+    [...(staging?.unstaged ?? []), ...(staging?.staged ?? [])]
+      .map((file) => file.path)
+      .filter(isTestChangedFile),
+  ).size;
+  const hidingTests = hideTestFiles && testFileCount > 0;
+  const shows = (file: VcsStagingFile) =>
+    matches(file) && !(hidingTests && isTestChangedFile(file.path));
+  // Everything that acts on rows, including folder moves and select-all, sees only shown files.
   const lists: Record<StagingListKind, ReadonlyArray<VcsStagingFile>> = {
     unstaged: (staging?.unstaged ?? []).filter(
-      (file) => matches(file) && !isMovedAway("unstaged", file),
+      (file) => shows(file) && !isMovedAway("unstaged", file),
     ),
-    staged: (staging?.staged ?? []).filter((file) => matches(file) && !isMovedAway("staged", file)),
+    staged: (staging?.staged ?? []).filter((file) => shows(file) && !isMovedAway("staged", file)),
   };
   const rows: Record<StagingListKind, ReadonlyArray<StagingRow>> = {
     unstaged: stagingRows(lists.unstaged, view, collapsed.unstaged),
@@ -687,6 +708,71 @@ export function StagingPanel(props: {
     </Tooltip>
   );
 
+  const diffToggles = (
+    <>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Toggle
+              aria-label={wordWrap ? "Disable diff line wrapping" : "Enable diff line wrapping"}
+              variant="ghost"
+              size="sm"
+              pressed={wordWrap}
+              onPressedChange={(pressed) => setWordWrap(Boolean(pressed))}
+            />
+          }
+        >
+          <TextWrapIcon className="size-3.5" />
+        </TooltipTrigger>
+        <TooltipPopup side="top">
+          {wordWrap ? "Disable line wrapping" : "Enable line wrapping"}
+        </TooltipPopup>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Toggle
+              aria-label={
+                diffIgnoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"
+              }
+              variant="ghost"
+              size="sm"
+              pressed={diffIgnoreWhitespace}
+              onPressedChange={(pressed) => setDiffIgnoreWhitespace(Boolean(pressed))}
+            />
+          }
+        >
+          <PilcrowIcon className="size-3.5" />
+        </TooltipTrigger>
+        <TooltipPopup side="top">
+          {diffIgnoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"}
+        </TooltipPopup>
+      </Tooltip>
+      {testFileCount > 0 && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                aria-label="Hide test files"
+                variant="ghost"
+                size="sm"
+                pressed={hideTestFiles}
+                onPressedChange={(pressed) => setHideTestFiles(Boolean(pressed))}
+              />
+            }
+          >
+            <FlaskConicalOffIcon className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">
+            {hideTestFiles
+              ? `Show ${testFileCount} hidden test ${testFileCount === 1 ? "file" : "files"}`
+              : "Hide test files"}
+          </TooltipPopup>
+        </Tooltip>
+      )}
+    </>
+  );
+
   const renderRow = (list: StagingListKind, row: StagingRow, isFirst: boolean) => {
     const isSelected = isRowSelected(list, row.key);
     const label = row.kind === "file" ? CHANGE_LABELS[row.file.change] : null;
@@ -804,7 +890,7 @@ export function StagingPanel(props: {
                 )}
               </TooltipTrigger>
               <TooltipPopup side="top">
-                {`${isUnstaged ? "Stage" : "Unstage"} all${query === "" ? "" : " matches"}`}
+                {`${isUnstaged ? "Stage" : "Unstage"} all${query === "" && !hidingTests ? "" : " shown"}`}
               </TooltipPopup>
             </Tooltip>
           ) : null}
@@ -820,11 +906,13 @@ export function StagingPanel(props: {
         <div role="listbox" aria-multiselectable className="min-h-0 flex-1 overflow-y-auto p-1.5">
           {files.length === 0 ? (
             <p className="px-3 py-2 text-xs text-muted-foreground">
-              {(staging?.[list].length ?? 0) > 0
-                ? "No matches."
-                : isUnstaged
-                  ? "No unstaged changes."
-                  : "Nothing staged."}
+              {(staging?.[list] ?? []).some((file) => matches(file) && !isMovedAway(list, file))
+                ? "Only hidden test files."
+                : (staging?.[list].length ?? 0) > 0
+                  ? "No matches."
+                  : isUnstaged
+                    ? "No unstaged changes."
+                    : "Nothing staged."}
             </p>
           ) : (
             rows[list].map((row, index) => renderRow(list, row, index === 0))
@@ -862,6 +950,8 @@ export function StagingPanel(props: {
             list={focused.list}
             file={focused.file}
             theme={theme}
+            wordWrap={wordWrap}
+            ignoreWhitespace={diffIgnoreWhitespace}
             composerDraftTarget={props.composerDraftTarget}
           />
         ) : (
@@ -885,6 +975,7 @@ export function StagingPanel(props: {
         <div className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border px-2">
           {filterToggle}
           <span className="flex-1" />
+          {diffToggles}
           {viewToggle}
         </div>
         {filterStrip}
@@ -995,6 +1086,8 @@ function StagingFileDiff(props: {
   readonly list: StagingListKind;
   readonly file: VcsStagingFile;
   readonly theme: "light" | "dark";
+  readonly wordWrap: boolean;
+  readonly ignoreWhitespace: boolean;
   readonly composerDraftTarget: ScopedThreadRef | DraftId;
 }) {
   const { file } = props;
@@ -1023,6 +1116,7 @@ function StagingFileDiff(props: {
   const diff = parseDiffFromFile(
     { name: file.previousPath ?? file.path, contents: contents.data.oldContents },
     { name: file.path, contents: contents.data.newContents },
+    { ignoreWhitespace: props.ignoreWhitespace },
   );
   const fileKey = buildFileDiffIdentityKey(diff);
   return (
@@ -1049,7 +1143,7 @@ function StagingFileDiff(props: {
       options={{
         diffStyle: "unified",
         lineDiffType: "none",
-        overflow: "wrap",
+        overflow: props.wordWrap ? "wrap" : "scroll",
         theme: resolveDiffThemeName(props.theme),
         themeType: props.theme,
         preferredHighlighter: PREFERRED_HIGHLIGHTER,

@@ -34,6 +34,14 @@ vi.mock("~/components/diffs/StyledDiffCodeView", () => ({
       ?.filter((item) => item.type === "diff")
       .map((item) => (
         <section key={item.id}>
+          <output aria-label="Diff line counts">
+            {JSON.stringify(
+              item.fileDiff.hunks.map(({ additionLines, deletionLines }) => ({
+                additionLines,
+                deletionLines,
+              })),
+            )}
+          </output>
           <button
             disabled={!props.options.enableGutterUtility}
             onClick={() =>
@@ -164,6 +172,7 @@ function setup(
   for (const key of ["view", "lists-width", "list-split"]) {
     localStorage.removeItem(`t3code:staging-${key}`);
   }
+  localStorage.removeItem("t3code.diffHideTestFiles");
   state.staging = {
     unstaged: [
       file("app/src/main.ts", "modified"),
@@ -353,6 +362,65 @@ it("filters both lists from find or the filter button, and acts only on matches"
   await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}{Backspace}");
   await expect.element(page.getByRole("button", { name: "Stage all" })).toBeVisible();
   await expect.element(page.getByRole("button", { name: "Unstage all" })).toBeVisible();
+});
+
+it("hides test files from both lists and bulk actions while keeping staged tests committable", async () => {
+  await using _screen = await setup({
+    unstaged: [file("app/src/main.ts", "modified"), file("app/src/main.test.ts", "modified")],
+    staged: [
+      file("app/lib/new.ts", "renamed", "app/lib/old.ts"),
+      file("app/src/main.test.ts", "modified"),
+    ],
+  });
+  await userEvent.click(row("unstaged", "app/src/main.test.ts"));
+  const toggle = page.getByRole("button", { name: "Hide test files", exact: true });
+  await userEvent.click(toggle);
+  await expect.element(page.getByText("Select a file to see its changes.")).toBeVisible();
+  expect(row("unstaged", "app/src/main.test.ts")).toBeNull();
+  expect(row("staged", "app/src/main.test.ts")).toBeNull();
+  expect(localStorage.getItem("t3code.diffHideTestFiles")).toBe("true");
+  await userEvent.click(page.getByRole("button", { name: "Stage all", exact: true }));
+  expect(state.stage).toHaveBeenCalledWith(pathsInput(["app/src/main.ts"]));
+  await userEvent.click(page.getByRole("button", { name: "Unstage all", exact: true }));
+  expect(state.unstage).toHaveBeenCalledWith(pathsInput(["app/lib/old.ts", "app/lib/new.ts"]));
+  await userEvent.click(page.getByRole("button", { name: "Filter files" }));
+  await userEvent.fill(page.getByRole("searchbox", { name: "Filter changed files" }), ".test.ts");
+  await expect
+    .element(page.getByRole("button", { name: "Stage all", exact: true }))
+    .not.toBeInTheDocument();
+  await expect
+    .element(page.getByRole("button", { name: "Unstage all", exact: true }))
+    .not.toBeInTheDocument();
+  await userEvent.click(page.getByRole("button", { name: "Commit", exact: true }));
+  expect(state.commit).toHaveBeenCalledWith(
+    expect.objectContaining({ action: "commit", stagedOnly: true }),
+  );
+  await userEvent.click(toggle);
+  await expect.element(row("unstaged", "app/src/main.test.ts")).toBeVisible();
+  await expect.element(row("staged", "app/src/main.test.ts")).toBeVisible();
+});
+
+it("filters whitespace-only changes without losing a comment on a substantive change", async () => {
+  await using _screen = await setup();
+  state.contents = {
+    oldContents: "old value\nunchanged\n",
+    newContents: "new value\nunchanged  \n",
+  };
+  await userEvent.click(row("unstaged", "app/src/main.ts"));
+  const counts = page.getByRole("status", { name: "Diff line counts" });
+  await userEvent.click(page.getByRole("button", { name: "Show whitespace changes", exact: true }));
+  await expect.element(counts).toHaveTextContent('[{"additionLines":2,"deletionLines":2}]');
+  await userEvent.click(page.getByRole("button", { name: "Comment on app/src/main.ts" }));
+  await userEvent.fill(page.getByPlaceholder("Add a comment…"), "Keep this change");
+  await userEvent.keyboard("{ControlOrMeta>}{Enter}{/ControlOrMeta}");
+  await userEvent.click(page.getByRole("button", { name: "Hide whitespace changes", exact: true }));
+  await expect.element(counts).toHaveTextContent('[{"additionLines":1,"deletionLines":1}]');
+  await expect.element(page.getByText("Keep this change", { exact: true })).toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: "Show whitespace changes", exact: true }));
+  await expect.element(counts).toHaveTextContent('[{"additionLines":2,"deletionLines":2}]');
+  expect(
+    useComposerDraftStore.getState().getComposerDraft(COMPOSER_TARGET)?.reviewComments,
+  ).toHaveLength(1);
 });
 
 it("offers list-specific context menu actions and confirms before discarding", async () => {
