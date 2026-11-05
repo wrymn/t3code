@@ -24,6 +24,8 @@ export class ElectronUpdaterCheckForUpdatesError extends Schema.TaggedError<Elec
   }
 }
 
+const isForkUpdateFailure = Schema.is(ForkUpdater.ForkUpdateFailure);
+
 export class ElectronUpdaterDownloadUpdateError extends Schema.TaggedError<ElectronUpdaterDownloadUpdateError>()(
   "ElectronUpdaterDownloadUpdateError",
   {
@@ -32,7 +34,7 @@ export class ElectronUpdaterDownloadUpdateError extends Schema.TaggedError<Elect
   },
 ) {
   override get message(): string {
-    if (this.cause instanceof ForkUpdater.ForkUpdateFailure) return this.cause.message;
+    if (isForkUpdateFailure(this.cause)) return this.cause.message;
     return `Electron updater failed to download the update on channel ${this.channel ?? "default"}.`;
   }
 }
