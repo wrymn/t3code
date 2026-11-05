@@ -17,7 +17,6 @@ export type StagingRow =
       readonly kind: "file";
       readonly key: string;
       readonly name: string;
-      readonly directory: string;
       readonly depth: number;
       readonly file: VcsStagingFile;
     };
@@ -28,11 +27,8 @@ interface DirectoryNode {
   readonly allFiles: VcsStagingFile[];
 }
 
-function splitPath(path: string) {
-  const slash = path.lastIndexOf("/");
-  return slash === -1
-    ? { name: path, directory: "" }
-    : { name: path.slice(slash + 1), directory: path.slice(0, slash) };
+function fileName(path: string) {
+  return path.slice(path.lastIndexOf("/") + 1);
 }
 
 function emptyNode(): DirectoryNode {
@@ -56,7 +52,7 @@ export function stagingRows(
       key: file.path,
       depth: 0,
       file,
-      ...splitPath(file.path),
+      name: fileName(file.path),
     }));
   }
 
@@ -96,7 +92,7 @@ export function stagingRows(
         key: file.path,
         depth,
         file,
-        ...splitPath(file.path),
+        name: fileName(file.path),
       });
     }
   };

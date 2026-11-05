@@ -178,6 +178,10 @@ it("stages and unstages by double-click, keyboard, and folder drag", async () =>
     pathsInput(["app/src/main.ts", "app/src/util.ts", "app/notes.md", "README.md"]),
   );
 
+  state.unstage.mockClear();
+  await userEvent.click(page.getByRole("button", { name: "Unstage all" }));
+  expect(state.unstage).toHaveBeenCalledWith(pathsInput(["app/lib/old.ts", "app/lib/new.ts"]));
+
   await userEvent.click(page.getByRole("button", { name: "Show as tree" }));
   await vi.waitFor(() => expect(row("unstaged", "app/")).not.toBeNull());
   state.stage.mockClear();
@@ -191,6 +195,18 @@ it("stages and unstages by double-click, keyboard, and folder drag", async () =>
   await vi.waitFor(() =>
     expect(state.stage).toHaveBeenCalledWith(pathsInput(["app/src/main.ts", "app/src/util.ts"])),
   );
+});
+
+it("hides bulk actions for empty lists", async () => {
+  await using _screen = await setup({ unstaged: [], staged: [] });
+  await expect.element(page.getByRole("button", { name: "Stage all" })).not.toBeInTheDocument();
+  await expect.element(page.getByRole("button", { name: "Unstage all" })).not.toBeInTheDocument();
+});
+
+it("disables bulk actions when status is truncated", async () => {
+  await using _screen = await setup({ truncated: true });
+  await expect.element(page.getByRole("button", { name: "Stage all" })).toBeDisabled();
+  await expect.element(page.getByRole("button", { name: "Unstage all" })).toBeDisabled();
 });
 
 it("collapses a folder and everything below it with Alt", async () => {
@@ -237,6 +253,12 @@ it("filters both lists from find or the filter button, and acts only on matches"
 
   await userEvent.click(page.getByRole("button", { name: "Filter files" }));
   await expect.element(filterInput).toHaveFocus();
+  await userEvent.keyboard("no-matching-files");
+  await expect.element(page.getByRole("button", { name: "Stage all" })).not.toBeInTheDocument();
+  await expect.element(page.getByRole("button", { name: "Unstage all" })).not.toBeInTheDocument();
+  await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}{Backspace}");
+  await expect.element(page.getByRole("button", { name: "Stage all" })).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Unstage all" })).toBeVisible();
 });
 
 it("offers list-specific context menu actions and confirms before discarding", async () => {

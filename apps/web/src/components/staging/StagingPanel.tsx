@@ -10,7 +10,13 @@ import type {
   ReviewDiffFileContentsInput,
   VcsStagingFile,
 } from "@t3tools/contracts";
-import { ChevronDown, ChevronsDownIcon, FolderTreeIcon, SearchIcon } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronsDownIcon,
+  ChevronsUpIcon,
+  FolderTreeIcon,
+  SearchIcon,
+} from "lucide-react";
 import { Schema } from "effect";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import {
@@ -25,6 +31,7 @@ import {
 import { flushSync } from "react-dom";
 
 import { PierreEntryIcon } from "~/components/chat/PierreEntryIcon";
+import { StartTruncatedPath } from "~/components/StartTruncatedPath";
 import { DIFF_VIEW_UNSAFE_CSS } from "~/components/diffs/StyledDiffCodeView";
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
@@ -624,12 +631,18 @@ export function StagingPanel(props: {
         ) : (
           <>
             <PierreEntryIcon pathValue={row.file.path} kind="file" theme={theme} />
-            <span className={cn("min-w-0 flex-1 truncate", label?.className)}>
-              {row.name}
-              {view === "list" && row.directory ? (
-                <span className="ms-1.5 text-muted-foreground">{row.directory}</span>
-              ) : null}
-            </span>
+            {view === "list" ? (
+              <StartTruncatedPath path={row.file.path} className={cn("flex-1", label?.className)} />
+            ) : (
+              <Tooltip>
+                <TooltipTrigger
+                  render={<span className={cn("min-w-0 flex-1 truncate", label?.className)} />}
+                >
+                  {row.name}
+                </TooltipTrigger>
+                <TooltipPopup>{row.file.path}</TooltipPopup>
+              </Tooltip>
+            )}
             <span className={cn("w-3 shrink-0 text-center font-mono", label?.className)}>
               {label?.letter}
             </span>
@@ -665,6 +678,31 @@ export function StagingPanel(props: {
           <h3 className="min-w-0 flex-1 truncate px-1 font-medium text-foreground">
             {isUnstaged ? "Unstaged" : "Staged"}
           </h3>
+          {files.length > 0 ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    aria-label={isUnstaged ? "Stage all" : "Unstage all"}
+                    variant="ghost"
+                    size="icon-xs"
+                    // A truncated status does not list every file, so "all" would be a lie.
+                    disabled={!canStage || moving || staging?.truncated !== false}
+                    onClick={() => void move(list, files)}
+                  />
+                }
+              >
+                {isUnstaged ? (
+                  <ChevronsDownIcon className="size-3.5" />
+                ) : (
+                  <ChevronsUpIcon className="size-3.5" />
+                )}
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                {`${isUnstaged ? "Stage" : "Unstage"} all${query === "" ? "" : " matches"}`}
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
           <Button
             size="compact"
             variant="outline"
@@ -740,30 +778,6 @@ export function StagingPanel(props: {
         <div className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border px-2">
           {filterToggle}
           <span className="flex-1" />
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  aria-label="Stage all"
-                  variant="ghost"
-                  size="icon-xs"
-                  // A truncated status does not list every file, so "all" would be a lie.
-                  disabled={
-                    !canStage ||
-                    moving ||
-                    staging?.truncated !== false ||
-                    lists.unstaged.length === 0
-                  }
-                  onClick={() => void move("unstaged", lists.unstaged)}
-                />
-              }
-            >
-              <ChevronsDownIcon className="size-3.5" />
-            </TooltipTrigger>
-            <TooltipPopup side="top">
-              {query === "" ? "Stage all" : "Stage all matches"}
-            </TooltipPopup>
-          </Tooltip>
           {viewToggle}
         </div>
         {filterStrip}
