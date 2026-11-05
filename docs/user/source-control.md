@@ -3,6 +3,20 @@
 T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, Azure DevOps, GitCafe, and Cursor
 Origin to clone and publish repositories, create pull requests, and review changes.
 
+## Open a pull request from another app
+
+A task tracker or other app can open a GitHub pull request in the T3 Code desktop review panel:
+
+```text
+t3code://review?pr=owner/repo/123
+```
+
+The `pr` parameter also accepts a full GitHub pull request URL. Encode it with
+`encodeURIComponent` when building the link. T3 Code must have a project for that repository
+on a connected machine, with GitHub access configured there. Opening the link does not check
+out code, create a thread, or start an agent. This link requires a desktop version that supports
+the `review` action.
+
 ## Review turn changes
 
 A turn's changed files and diff show only the turn's own work. When a turn pulls, merges, or
