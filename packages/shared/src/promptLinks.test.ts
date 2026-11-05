@@ -121,6 +121,29 @@ describe("link round trips", () => {
   });
 
   it("maps app scheme and hosted links to in-app paths, and nothing else", () => {
+    for (const reference of [
+      "pingdotgg/t3code/42",
+      "pingdotgg/t3code#42",
+      "https://github.com/pingdotgg/t3code/pull/42/files",
+    ]) {
+      const search = new URLSearchParams({ pr: reference, prompt: "Do not run this" });
+      expect(promptLinkAppPath(`t3code://review?${search}`)).toBe(
+        "/pull-requests?repository=pingdotgg%2Ft3code&number=42&selectedHost=github.com",
+      );
+    }
+    expect(promptLinkAppPath("t3code-dev://review?pr=pingdotgg/t3code/42")).toBe(
+      "/pull-requests?repository=pingdotgg%2Ft3code&number=42&selectedHost=github.com",
+    );
+    for (const invalid of [
+      "t3code://review",
+      "t3code://review/extra?pr=pingdotgg/t3code/42",
+      "t3code://review?pr=../etc/42",
+      "t3code://review?pr=pingdotgg/t3code/0",
+      "t3code://review?pr=pingdotgg/t3code/9007199254740992",
+      "t3code://review?pr=https://evil.test/pingdotgg/t3code/pull/42",
+    ]) {
+      expect(promptLinkAppPath(invalid)).toBeNull();
+    }
     expect(promptLinkAppPath("t3code://new?prompt=hi")).toBe("/new?prompt=hi");
     expect(promptLinkAppPath("t3code-dev://threads/env-1/thread-1")).toBe("/env-1/thread-1");
     expect(promptLinkAppPath("https://app.t3.codes/env-1/thread-1?prompt=go")).toBe(
