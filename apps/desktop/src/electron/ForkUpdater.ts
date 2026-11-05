@@ -47,7 +47,10 @@ rm -rf "$staged"
 open "$current"
 `;
 
-export class ForkUpdateFailure extends Error {}
+export class ForkUpdateFailure extends Schema.TaggedError<ForkUpdateFailure>()(
+  "ForkUpdateFailure",
+  { message: Schema.String },
+) {}
 
 export interface ForkUpdater {
   readonly checkForUpdates: () => Promise<void>;
@@ -110,7 +113,12 @@ function runForkBuild(forkSource: string, version: string): Promise<string> {
     child.on("error", reject);
     child.on("close", (code) => {
       if (code === 0 && appPath) resolve(appPath);
-      else reject(new ForkUpdateFailure(errorMessage ?? `Fork rebuild exited with code ${code}.`));
+      else
+        reject(
+          new ForkUpdateFailure({
+            message: errorMessage ?? `Fork rebuild exited with code ${code}.`,
+          }),
+        );
     });
   });
 }
@@ -143,14 +151,15 @@ export function fromPackagedApp(): ForkUpdater | undefined {
     },
     downloadUpdate: async () => {
       const version = availableVersion;
-      if (version === undefined) throw new ForkUpdateFailure("No upstream update to build.");
+      if (version === undefined)
+        throw new ForkUpdateFailure({ message: "No upstream update to build." });
       builtApp = await runForkBuild(forkSource, version);
       emitUpdaterEvent("update-downloaded", { version });
     },
     quitAndInstall: () => {
       const bundle = currentAppBundle();
       if (builtApp === undefined || bundle === undefined || !NodeFS.existsSync(builtApp)) {
-        throw new ForkUpdateFailure("No rebuilt app to install.");
+        throw new ForkUpdateFailure({ message: "No rebuilt app to install." });
       }
       NodeChildProcess.spawn(
         "/bin/sh",
