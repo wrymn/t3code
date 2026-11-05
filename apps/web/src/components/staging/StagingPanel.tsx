@@ -1,6 +1,5 @@
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import { parseDiffFromFile } from "@pierre/diffs";
-import { FileDiff } from "@pierre/diffs/react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -13,6 +12,7 @@ import {
 import type {
   EnvironmentId,
   ReviewDiffFileContentsInput,
+  ScopedThreadRef,
   VcsStagingFile,
 } from "@t3tools/contracts";
 import {
@@ -37,7 +37,8 @@ import { flushSync } from "react-dom";
 
 import { PierreEntryIcon } from "~/components/chat/PierreEntryIcon";
 import { StartTruncatedPath } from "~/components/StartTruncatedPath";
-import { DIFF_VIEW_UNSAFE_CSS } from "~/components/diffs/StyledDiffCodeView";
+import { AnnotatableCodeView } from "~/components/diffs/AnnotatableCodeView";
+import type { DraftId } from "~/composerDraftStore";
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
 import { toastManager } from "~/components/ui/toast";
@@ -51,7 +52,11 @@ import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { readLocalApi } from "~/localApi";
 import { useRenderedAppearance } from "~/hooks/useTheme";
-import { resolveDiffThemeName } from "~/lib/diffRendering";
+import {
+  buildFileDiffContentVersion,
+  buildFileDiffIdentityKey,
+  resolveDiffThemeName,
+} from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn, randomUUID } from "~/lib/utils";
 import { useEnvironmentQuery } from "~/state/query";
@@ -132,6 +137,8 @@ export function StagingPanel(props: {
   readonly cwd: string | null;
   readonly repositoryRoot: string | undefined;
   readonly visible: boolean;
+  /** The same composer draft used by the thread's Diff panel for review comments. */
+  readonly composerDraftTarget: ScopedThreadRef | DraftId;
 }) {
   const { environmentId, cwd, repositoryRoot } = props;
   const theme = useRenderedAppearance();
@@ -833,6 +840,7 @@ export function StagingPanel(props: {
       className="flex h-full min-h-0 w-full"
       data-staging-panel
       onKeyDown={(event) => {
+        if (event.defaultPrevented) return;
         if (event.key === "Escape" && filter !== null) {
           event.preventDefault();
           closeFilter();
@@ -854,6 +862,7 @@ export function StagingPanel(props: {
             list={focused.list}
             file={focused.file}
             theme={theme}
+            composerDraftTarget={props.composerDraftTarget}
           />
         ) : (
           <StagingMessage>Select a file to see its changes.</StagingMessage>
@@ -986,6 +995,7 @@ function StagingFileDiff(props: {
   readonly list: StagingListKind;
   readonly file: VcsStagingFile;
   readonly theme: "light" | "dark";
+  readonly composerDraftTarget: ScopedThreadRef | DraftId;
 }) {
   const { file } = props;
   const conflicted = file.change === "conflicted";
@@ -1014,9 +1024,28 @@ function StagingFileDiff(props: {
     { name: file.previousPath ?? file.path, contents: contents.data.oldContents },
     { name: file.path, contents: contents.data.newContents },
   );
+  const fileKey = buildFileDiffIdentityKey(diff);
   return (
-    <FileDiff
-      fileDiff={diff}
+    <AnnotatableCodeView
+      codeViewKey={fileKey}
+      className="h-full min-h-0 overflow-auto"
+      files={[
+        {
+          fileDiff: diff,
+          filePath: file.path,
+          fileKey,
+          fileVersion: buildFileDiffContentVersion(diff),
+          collapsed: false,
+        },
+      ]}
+      pendingFiles={[]}
+      sectionId={`staging:${props.list}`}
+      relatedSectionIds={[props.list === "staged" ? "staging:unstaged" : "staging:staged"]}
+      sectionTitle={props.list === "staged" ? "Staged changes" : "Unstaged changes"}
+      composerDraftTarget={props.composerDraftTarget}
+      renderHeaderFilenameSuffix={() => null}
+      renderHeaderPrefix={() => null}
+      onRevealSearchMatch={() => {}}
       options={{
         diffStyle: "unified",
         lineDiffType: "none",
@@ -1024,7 +1053,6 @@ function StagingFileDiff(props: {
         theme: resolveDiffThemeName(props.theme),
         themeType: props.theme,
         preferredHighlighter: PREFERRED_HIGHLIGHTER,
-        unsafeCSS: DIFF_VIEW_UNSAFE_CSS,
       }}
     />
   );

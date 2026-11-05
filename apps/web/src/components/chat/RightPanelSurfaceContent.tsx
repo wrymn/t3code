@@ -181,6 +181,7 @@ export function RightPanelSurfaceContent(props: {
             cwd={props.gitCwd}
             repositoryRoot={props.files.repositoryRoot}
             visible={visible}
+            composerDraftTarget={props.composerDraftTarget}
           />
         </Suspense>
       );

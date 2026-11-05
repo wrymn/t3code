@@ -11,14 +11,52 @@ import {
   type VcsActionState,
 } from "@t3tools/client-runtime/state/vcs";
 import { Cause } from "effect";
+import type { CodeViewDiffItem, SelectedLineRange } from "@pierre/diffs";
+import type { ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
+
+type ViewerProps = Omit<ComponentProps<typeof StyledDiffCodeView<unknown>>, "options"> & {
+  options: {
+    enableGutterUtility: boolean;
+    onGutterUtilityClick: (
+      range: SelectedLineRange,
+      context: { item: CodeViewDiffItem<unknown> },
+    ) => void;
+  };
+};
+
+// Keep the comment editor and draft store real; replace only the virtualized renderer.
+vi.mock("~/components/diffs/StyledDiffCodeView", () => ({
+  DIFF_VIEW_UNSAFE_CSS: "",
+  StyledDiffCodeView: (props: ViewerProps) =>
+    props.items
+      ?.filter((item) => item.type === "diff")
+      .map((item) => (
+        <section key={item.id}>
+          <button
+            disabled={!props.options.enableGutterUtility}
+            onClick={() =>
+              props.options.onGutterUtilityClick({ start: 1, end: 1, side: "additions" }, { item })
+            }
+          >
+            Comment on {item.fileDiff.name}
+          </button>
+          {item.annotations?.map((annotation) => (
+            <div key={`${annotation.side}:${annotation.lineNumber}`}>
+              {props.renderAnnotation?.(annotation, item.fileDiff, item)}
+            </div>
+          ))}
+        </section>
+      )),
+}));
 
 const state = vi.hoisted(() => ({
   staging: null as unknown as VcsStagingStatusResult,
   status: null as unknown as VcsStatusResult,
   progress: null as unknown as VcsActionState,
   allowed: true,
+  contents: { oldContents: "old value\n", newContents: "new value\n" },
   stage: vi.fn(),
   unstage: vi.fn(),
   discard: vi.fn(),
@@ -60,7 +98,9 @@ vi.mock(import("~/state/query"), async (importOriginal) => ({
       ? { data: state.staging }
       : atom === "git-status"
         ? { data: state.status }
-        : { data: undefined }) as never,
+        : atom === "file-contents"
+          ? { data: state.contents }
+          : { data: undefined }) as never,
 }));
 vi.mock(import("~/state/use-atom-command"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -97,8 +137,11 @@ import { dismissContextMenu } from "~/contextMenuFallback";
 import { render } from "../../../test/render";
 import { StagingPanel } from "./StagingPanel";
 import { toastManager } from "~/components/ui/toast";
+import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import type { StyledDiffCodeView } from "~/components/diffs/StyledDiffCodeView";
 
 const ENVIRONMENT_ID = EnvironmentId.make("env-staging");
+const COMPOSER_TARGET = DraftId.make("staging-comments");
 // The project is a subfolder of the repository, so status paths start with "app/".
 const CWD = "/repo/app";
 const SUCCESS = { _tag: "Success", value: undefined };
@@ -114,6 +157,8 @@ function setup(
   statusOverrides: Partial<VcsStatusResult> = {},
   progressOverrides: Partial<VcsActionState> = {},
 ) {
+  useComposerDraftStore.setState(useComposerDraftStore.getInitialState(), true);
+  state.contents = { oldContents: "old value\n", newContents: "new value\n" };
   state.allowed = true;
   state.progress = { ...EMPTY_VCS_ACTION_STATE, ...progressOverrides };
   for (const key of ["view", "lists-width", "list-split"]) {
@@ -161,7 +206,13 @@ function setup(
   return render(
     <ComposerHandleContext value={composer}>
       <div style={{ width: 900, height: 600 }}>
-        <StagingPanel environmentId={ENVIRONMENT_ID} cwd={CWD} repositoryRoot="/repo" visible />
+        <StagingPanel
+          composerDraftTarget={COMPOSER_TARGET}
+          environmentId={ENVIRONMENT_ID}
+          cwd={CWD}
+          repositoryRoot="/repo"
+          visible
+        />
       </div>
     </ComposerHandleContext>,
   );
@@ -391,7 +442,13 @@ it("commits only staged changes and blocks the commit while conflicts remain", a
   state.staging = { ...state.staging, unstaged: [file("app/conflict.ts", "conflicted")] };
   await screen.rerender(
     <ComposerHandleContext value={null}>
-      <StagingPanel environmentId={ENVIRONMENT_ID} cwd={CWD} repositoryRoot="/repo" visible />
+      <StagingPanel
+        composerDraftTarget={COMPOSER_TARGET}
+        environmentId={ENVIRONMENT_ID}
+        cwd={CWD}
+        repositoryRoot="/repo"
+        visible
+      />
     </ComposerHandleContext>,
   );
   await expect
@@ -488,7 +545,13 @@ it("updates an existing PR by pushing, and uses MR terminology for GitLab", asyn
   };
   await screen.rerender(
     <ComposerHandleContext value={null}>
-      <StagingPanel environmentId={ENVIRONMENT_ID} cwd={CWD} repositoryRoot="/repo" visible />
+      <StagingPanel
+        composerDraftTarget={COMPOSER_TARGET}
+        environmentId={ENVIRONMENT_ID}
+        cwd={CWD}
+        repositoryRoot="/repo"
+        visible
+      />
     </ComposerHandleContext>,
   );
   await userEvent.click(page.getByRole("button", { name: "More commit actions" }));
@@ -543,7 +606,13 @@ it("blocks commit and publish choices when source control permission is absent",
   state.allowed = false;
   await screen.rerender(
     <ComposerHandleContext value={null}>
-      <StagingPanel environmentId={ENVIRONMENT_ID} cwd={CWD} repositoryRoot="/repo" visible />
+      <StagingPanel
+        composerDraftTarget={COMPOSER_TARGET}
+        environmentId={ENVIRONMENT_ID}
+        cwd={CWD}
+        repositoryRoot="/repo"
+        visible
+      />
     </ComposerHandleContext>,
   );
   await expect.element(page.getByRole("button", { name: "Commit", exact: true })).toBeDisabled();
@@ -551,6 +620,78 @@ it("blocks commit and publish choices when source control permission is absent",
   for (const index of [0, 1, 2]) {
     await expect.element(page.getByRole("menuitem").nth(index)).toBeDisabled();
   }
+  expect(state.commit).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["unstaged", "app/src/main.ts", "Unstaged changes"],
+  ["staged", "app/lib/new.ts", "Staged changes"],
+] as const)("adds %s diff comments to the existing composer draft", async (list, path, title) => {
+  await using _screen = await setup();
+  await userEvent.click(page.getByRole("button", { name: "Filter files" }));
+  const filterInput = page.getByRole("searchbox", { name: "Filter changed files" });
+  await userEvent.fill(filterInput, "app");
+  await userEvent.click(row(list, path));
+  await userEvent.click(page.getByRole("button", { name: `Comment on ${path}` }));
+  const editor = page.getByPlaceholder("Add a comment…");
+  await userEvent.fill(editor, "Cancel this draft");
+  await userEvent.keyboard("{Escape}");
+  await expect.element(editor).not.toBeInTheDocument();
+  await expect.element(filterInput).toHaveValue("app");
+  expect(row("unstaged", "README.md")).toBeNull();
+  await userEvent.click(page.getByRole("button", { name: `Comment on ${path}` }));
+  await userEvent.fill(editor, "Review this change");
+  await userEvent.keyboard("{ControlOrMeta>}{Enter}{/ControlOrMeta}");
+  await vi.waitFor(() =>
+    expect(
+      useComposerDraftStore.getState().getComposerDraft(COMPOSER_TARGET)?.reviewComments,
+    ).toEqual([
+      expect.objectContaining({
+        filePath: path,
+        sectionTitle: title,
+        sectionId: `staging:${list}`,
+        text: "Review this change",
+        rangeLabel: "+1",
+        diff: expect.stringContaining("+new value"),
+      }),
+    ]),
+  );
+  await expect.element(editor).not.toBeInTheDocument();
+  for (const from of [list, list === "staged" ? "unstaged" : "staged"] as const) {
+    const to = from === "staged" ? "unstaged" : "staged";
+    const command = from === "staged" ? state.unstage : state.stage;
+    command.mockImplementationOnce(async () => {
+      const moved = state.staging[from].find((entry) => entry.path === path)!;
+      state.staging = {
+        ...state.staging,
+        [from]: state.staging[from].filter((entry) => entry.path !== path),
+        [to]: [...state.staging[to], moved],
+      };
+      return SUCCESS;
+    });
+    await userEvent.click(
+      page.getByRole("button", { name: from === "staged" ? "Unstage" : "Stage", exact: true }),
+    );
+    await userEvent.click(row(to, path));
+    await expect.element(page.getByText("Review this change", { exact: true })).toBeVisible();
+    expect(
+      useComposerDraftStore.getState().getComposerDraft(COMPOSER_TARGET)?.reviewComments,
+    ).toHaveLength(1);
+    if (to !== list) {
+      state.contents = { ...state.contents, newContents: "a different change\n" };
+      await userEvent.fill(filterInput, "app/");
+      await expect
+        .element(page.getByText("Review this change", { exact: true }))
+        .not.toBeInTheDocument();
+      state.contents = { ...state.contents, newContents: "new value\n" };
+      await userEvent.fill(filterInput, "app");
+      await expect.element(page.getByText("Review this change", { exact: true })).toBeVisible();
+    }
+  }
+  await userEvent.click(page.getByRole("button", { name: "Delete comment" }));
+  expect(
+    useComposerDraftStore.getState().getComposerDraft(COMPOSER_TARGET)?.reviewComments ?? [],
+  ).toEqual([]);
   expect(state.commit).not.toHaveBeenCalled();
 });
 
