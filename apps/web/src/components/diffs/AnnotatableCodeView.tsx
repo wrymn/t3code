@@ -82,6 +82,8 @@ interface AnnotatableCodeViewProps {
   }>;
   pendingFiles: ReadonlyArray<FileDiffMetadata>;
   sectionId: string;
+  /** Also restores comments from these sections when their selected diff text still matches. */
+  relatedSectionIds?: ReadonlyArray<string>;
   sectionTitle: string;
   composerDraftTarget: ScopedThreadRef | DraftId;
   options: StyledDiffCodeViewOptions<DiffCommentAnnotationGroup>;
@@ -108,6 +110,7 @@ export function AnnotatableCodeView({
   files,
   pendingFiles,
   sectionId,
+  relatedSectionIds,
   sectionTitle,
   composerDraftTarget,
   options,
@@ -157,13 +160,19 @@ export function AnnotatableCodeView({
       const persisted = reviewComments
         .filter(
           (comment) =>
-            comment.sectionId === sectionId &&
+            (comment.sectionId === sectionId || relatedSectionIds?.includes(comment.sectionId)) &&
             comment.filePath === filePath &&
             (comment.fenceLanguage ?? "diff") === "diff",
         )
         .reduce<DiffCommentLineAnnotation[]>((annotations, comment) => {
           const range = restoreDiffReviewCommentRange(fileDiff, comment);
           if (!range) return annotations;
+          if (
+            comment.sectionId !== sectionId &&
+            buildDiffReviewComment({ ...comment, fileDiff, range })?.diff !== comment.diff
+          ) {
+            return annotations;
+          }
           return appendAnnotationEntry(annotations, range, {
             id: comment.id,
             kind: "comment",

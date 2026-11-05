@@ -524,6 +524,7 @@ interface CommitAndBranchSuggestion {
   body: string;
   branch?: string | undefined;
   commitMessage: string;
+  indexTree?: string | undefined;
 }
 
 function isCommitAction(
@@ -1138,6 +1139,7 @@ export const make = Effect.gen(function* () {
       refName: details.branch,
       hasWorkingTreeChanges: details.hasWorkingTreeChanges,
       workingTree: details.workingTree,
+      ...(details.indexRevision ? { indexRevision: details.indexRevision } : {}),
       ...(details.branchChanges ? { branchChanges: details.branchChanges } : {}),
     } satisfies VcsStatusLocalResult;
   });
@@ -2106,11 +2108,11 @@ export const make = Effect.gen(function* () {
       branch: string | null;
       commitMessage?: string;
       includeBranch?: boolean;
-      filePaths?: readonly string[];
+      selection?: GitVcsDriver.GitCommitSelection;
       settings: SourceControlTextGenerationSettings;
     }) {
       const customCommit = parseCustomCommitMessage(input.commitMessage ?? "");
-      const context = yield* gitCore.prepareCommitContext(input.cwd, input.filePaths, {
+      const context = yield* gitCore.prepareCommitContext(input.cwd, input.selection, {
         includePatch: customCommit === null,
       });
       if (!context) {
@@ -2125,6 +2127,7 @@ export const make = Effect.gen(function* () {
             ? { branch: sanitizeFeatureBranchName(customCommit.subject) }
             : {}),
           commitMessage: formatCommitMessage(customCommit.subject, customCommit.body),
+          indexTree: context.indexTree,
         };
       }
 
@@ -2147,6 +2150,7 @@ export const make = Effect.gen(function* () {
         body: generated.body,
         ...(generated.branch !== undefined ? { branch: generated.branch } : {}),
         commitMessage: formatCommitMessage(generated.subject, generated.body),
+        indexTree: context.indexTree,
       };
     },
   );
@@ -2158,7 +2162,7 @@ export const make = Effect.gen(function* () {
     branch: string | null,
     commitMessage?: string,
     preResolvedSuggestion?: CommitAndBranchSuggestion,
-    filePaths?: readonly string[],
+    selection?: GitVcsDriver.GitCommitSelection,
     progressReporter?: GitActionProgressReporter,
     actionId?: string,
   ) {
@@ -2186,7 +2190,7 @@ export const make = Effect.gen(function* () {
         cwd,
         branch,
         ...(commitMessage ? { commitMessage } : {}),
-        ...(filePaths ? { filePaths } : {}),
+        ...(selection ? { selection } : {}),
         settings,
       });
     }
@@ -2246,7 +2250,11 @@ export const make = Effect.gen(function* () {
         : null;
     const { commitSha } = yield* gitCore.commit(cwd, suggestion.subject, suggestion.body, {
       timeoutMs: COMMIT_TIMEOUT_MS,
-      stage: filePaths ? { filePaths } : {},
+      ...(selection === "staged"
+        ? suggestion.indexTree === undefined
+          ? {}
+          : { expectedIndexTree: suggestion.indexTree }
+        : { stage: selection ? { filePaths: selection } : {} }),
       ...(commitProgress ? { progress: commitProgress } : {}),
     });
     if (currentHookName !== null) {
@@ -3090,13 +3098,13 @@ export const make = Effect.gen(function* () {
     cwd: string,
     branch: string | null,
     commitMessage?: string,
-    filePaths?: readonly string[],
+    selection?: GitVcsDriver.GitCommitSelection,
   ) {
     const suggestion = yield* resolveCommitAndBranchSuggestion({
       cwd,
       branch,
       ...(commitMessage ? { commitMessage } : {}),
-      ...(filePaths ? { filePaths } : {}),
+      ...(selection ? { selection } : {}),
       includeBranch: true,
       settings,
     });
@@ -3148,6 +3156,16 @@ export const make = Effect.gen(function* () {
             detail: "Feature-branch checkout is only supported for commit actions.",
           });
         }
+        if (input.stagedOnly && input.filePaths) {
+          return yield* new GitManagerError({
+            operation: "runStackedAction",
+            cwd: input.cwd,
+            detail: "Commit either the staged changes or selected files, not both.",
+          });
+        }
+        const commitSelection: GitVcsDriver.GitCommitSelection | undefined = input.stagedOnly
+          ? "staged"
+          : input.filePaths;
         const phases: GitActionProgressPhase[] = [
           ...(input.featureBranch ? (["branch"] as const) : []),
           ...(wantsCommit ? (["commit"] as const) : []),
@@ -3220,7 +3238,7 @@ export const make = Effect.gen(function* () {
             input.cwd,
             initialStatus.branch,
             input.commitMessage,
-            input.filePaths,
+            commitSelection,
           );
           branchStep = result.branchStep;
           commitMessageForStep = result.resolvedCommitMessage;
@@ -3243,7 +3261,7 @@ export const make = Effect.gen(function* () {
                   currentBranch,
                   commitMessageForStep,
                   preResolvedCommitSuggestion,
-                  input.filePaths,
+                  commitSelection,
                   options?.progressReporter,
                   progress.actionId,
                 ),

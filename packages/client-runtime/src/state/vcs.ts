@@ -13,10 +13,11 @@ import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import {
   createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
 } from "./runtime.ts";
@@ -286,6 +287,54 @@ export function createVcsEnvironmentAtoms<R, E>(
       cwd: target.input.cwd,
     });
 
+  const status = createEnvironmentSubscriptionAtomFamily(runtime, {
+    label: "environment-data:vcs:status",
+    idleTtlMs: VCS_STATUS_IDLE_TTL_MS,
+    subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.subscribeVcsStatus>) =>
+      subscribe(WS_METHODS.subscribeVcsStatus, input).pipe(
+        Stream.mapAccum(
+          () => null as VcsStatusResult | null,
+          (current, event) => {
+            const next = applyGitStatusStreamEvent(current, event);
+            return [next, [next]] as const;
+          },
+        ),
+      ),
+  });
+  // Status carries only index hashes and line totals, so an edit that keeps both
+  // unchanged needs the explicit bump from a status refresh or an index write.
+  const stagingBumps = Atom.family((_key: string) => Atom.make(0).pipe(Atom.keepAlive));
+  const stagingKey = (environmentId: EnvironmentId, cwd: string) =>
+    JSON.stringify([environmentId, cwd]);
+  const bumpStaging = (
+    target: { readonly environmentId: EnvironmentId; readonly input: { readonly cwd: string } },
+    registry: AtomRegistry.AtomRegistry,
+  ) =>
+    Effect.sync(() =>
+      registry.update(
+        stagingBumps(stagingKey(target.environmentId, target.input.cwd)),
+        (n) => n + 1,
+      ),
+    );
+  const stagingRevision = Atom.family((key: string) => {
+    const [environmentId, cwd] = JSON.parse(key) as [EnvironmentId, string];
+    return Atom.make((get) => {
+      const local = Option.getOrNull(
+        AsyncResult.value(get(status({ environmentId, input: { cwd } }))),
+      );
+      const tree = local?.workingTree;
+      return `${get(stagingBumps(key))}:${local?.indexRevision ?? ""}:${tree?.files.length ?? 0}:${tree?.insertions ?? 0}:${tree?.deletions ?? 0}:${local?.refName ?? ""}`;
+    });
+  });
+  const stagingTrigger = (target: {
+    readonly environmentId: EnvironmentId;
+    readonly input: { readonly cwd: string };
+  }) => stagingRevision(stagingKey(target.environmentId, target.input.cwd));
+  const settleIndexWrite = (
+    target: { readonly environmentId: EnvironmentId; readonly input: { readonly cwd: string } },
+    registry: AtomRegistry.AtomRegistry,
+  ) => Effect.andThen(invalidateRefs(target, registry), bumpStaging(target, registry));
+
   return {
     listRefs,
     // An uncached read for decisions that must match the repository now, not
@@ -294,20 +343,7 @@ export function createVcsEnvironmentAtoms<R, E>(
       label: "environment-data:vcs:read-refs",
       tag: WS_METHODS.vcsListRefs,
     }),
-    status: createEnvironmentSubscriptionAtomFamily(runtime, {
-      label: "environment-data:vcs:status",
-      idleTtlMs: VCS_STATUS_IDLE_TTL_MS,
-      subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.subscribeVcsStatus>) =>
-        subscribe(WS_METHODS.subscribeVcsStatus, input).pipe(
-          Stream.mapAccum(
-            () => null as VcsStatusResult | null,
-            (current, event) => {
-              const next = applyGitStatusStreamEvent(current, event);
-              return [next, [next]] as const;
-            },
-          ),
-        ),
-    }),
+    status,
     pull: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:pull",
       tag: WS_METHODS.vcsPull,
@@ -320,7 +356,7 @@ export function createVcsEnvironmentAtoms<R, E>(
       tag: WS_METHODS.vcsRefreshStatus,
       scheduler: vcsCommandScheduler,
       concurrency: vcsCommandConcurrency,
-      onSettled: invalidateRefs,
+      onSettled: settleIndexWrite,
     }),
     createWorktree: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:create-worktree",
@@ -358,6 +394,37 @@ export function createVcsEnvironmentAtoms<R, E>(
       scheduler: vcsCommandScheduler,
       concurrency: vcsCommandConcurrency,
       onSettled: invalidateRefs,
+    }),
+    stagingStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:vcs:staging-status",
+      tag: WS_METHODS.vcsGetStagingStatus,
+      refreshTrigger: stagingTrigger,
+    }),
+    stagingFileContents: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:vcs:staging-file-contents",
+      tag: WS_METHODS.reviewGetDiffFileContents,
+      refreshTrigger: stagingTrigger,
+    }),
+    stagePaths: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:stage-paths",
+      tag: WS_METHODS.vcsStagePaths,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: bumpStaging,
+    }),
+    unstagePaths: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:unstage-paths",
+      tag: WS_METHODS.vcsUnstagePaths,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: bumpStaging,
+    }),
+    discardPaths: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:discard-paths",
+      tag: WS_METHODS.vcsDiscardPaths,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: bumpStaging,
     }),
     init: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:init",

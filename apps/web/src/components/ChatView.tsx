@@ -2339,6 +2339,7 @@ export default function ChatView(props: ChatViewProps) {
     activateRightPanelSurfaceStable,
     addDeviceSurfaceStable,
     addDiffSurfaceStable,
+    addStagingSurfaceStable,
     addFilesSurfaceStable,
     addPullRequestSurfaceStable,
     addPullRequestsSurfaceStable,
@@ -2704,8 +2705,11 @@ export default function ChatView(props: ChatViewProps) {
       "thread.copyReference": ({ event }) => {
         if (!event.repeat) copyActiveThreadReference();
       },
-      "chat.find": () => {
+      "chat.find": ({ event }) => {
         if (!isServerThread || serverConfig?.threadFind !== true || activeThreadKey === null)
+          return false;
+        // The staging panel uses find to filter its own lists.
+        if (event.target instanceof Element && event.target.closest("[data-staging-panel]"))
           return false;
         openThreadFind(activeThreadKey);
       },
@@ -3192,6 +3196,7 @@ export default function ChatView(props: ChatViewProps) {
       activeSurfaceId={activeRightPanelSurface?.id ?? null}
       threadRef={activeThreadRef}
       environmentId={activeThread.environmentId}
+      gitCwd={gitCwd}
       visible={rightPanelOpen}
       composerDraftTarget={composerDraftTarget}
       keybindings={keybindings}
@@ -3230,6 +3235,9 @@ export default function ChatView(props: ChatViewProps) {
       files={{
         projectName: activeProject?.title ?? null,
         workspaceRoot: activeWorkspaceRoot,
+        repositoryRoot: activeThread?.worktreePath
+          ? undefined
+          : activeProject?.repositoryIdentity?.rootPath,
         availableEditors,
         pendingSurfaceIds: pendingFileSurfaceIds,
         onOpenFile: openFileSurfaceStable,
@@ -3982,6 +3990,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddBrowserInProfile={createBrowserSurfaceStable}
           onAddTerminal={addTerminalSurfaceStable}
           onAddDiff={addDiffSurfaceStable}
+          onAddStaging={addStagingSurfaceStable}
           onAddFiles={addFilesSurfaceStable}
           onAddPullRequest={addPullRequestSurfaceStable}
           onAddPullRequests={addPullRequestsSurfaceStable}

@@ -240,6 +240,7 @@ describe("applyGitStatusStreamEvent", () => {
         insertions: 1,
         deletions: 0,
       },
+      indexRevision: "a1b2c3d4",
       hasUpstream: false,
       aheadCount: 0,
       behindCount: 0,
