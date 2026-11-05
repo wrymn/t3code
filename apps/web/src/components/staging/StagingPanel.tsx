@@ -5,6 +5,11 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import {
+  changeRequestTerminologyFor,
+  requiresDefaultBranchConfirmation,
+  VcsActionRemoteFailureError,
+} from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
   ReviewDiffFileContentsInput,
@@ -52,7 +57,13 @@ import { cn, randomUUID } from "~/lib/utils";
 import { useEnvironmentQuery } from "~/state/query";
 import { useGitStackedAction } from "~/state/sourceControlActions";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { vcsEnvironment, vcsStatusRevalidation } from "~/state/vcs";
+import { vcsActionManager, vcsEnvironment, vcsStatusRevalidation } from "~/state/vcs";
+
+import {
+  StagingCommitControl,
+  type StagingCommitChoice,
+  type StagingCommitChoiceId,
+} from "./StagingCommitControl";
 
 import {
   stagingDirectoryKeysUnder,
@@ -65,6 +76,7 @@ import {
 } from "./stagingTree";
 
 type StagingListKind = "unstaged" | "staged";
+const isRemoteActionFailure = Schema.is(VcsActionRemoteFailureError);
 
 /** Keys are row keys: file paths, or directory paths ending in a slash. */
 interface StagingSelection {
@@ -210,6 +222,17 @@ export function StagingPanel(props: {
   const composerRef = useComposerHandleContext();
   const [moving, setMoving] = useState(false);
   const commitAction = useGitStackedAction({ environmentId, cwd });
+  const refreshStatus = useAtomCommand(vcsEnvironment.refreshStatus, { reportFailure: false });
+  const gitStatusQuery = useEnvironmentQuery(
+    cwd === null ? null : vcsEnvironment.status({ environmentId, input: { cwd } }),
+  );
+  const gitStatus = gitStatusQuery.data;
+  const gitActionState = useAtomValue(vcsActionManager.stateAtom({ environmentId, cwd }));
+  const busyLabel = gitActionState.isRunning
+    ? (gitActionState.currentLabel ?? "Running source control action...")
+    : commitAction.isPending
+      ? "Running source control action..."
+      : null;
 
   const selectedFiles = (list: StagingListKind) =>
     selection?.list === list ? stagingFilesForKeys(lists[list], selection.keys) : [];
@@ -264,23 +287,42 @@ export function StagingPanel(props: {
     if (next) document.getElementById(rowId(from, next))?.focus();
   };
 
-  const commit = async () => {
+  const runCommitAction = async (action: StagingCommitChoiceId) => {
+    const choice = commitChoices.find((entry) => entry.id === action);
+    if (!choice || choice.disabledReason != null || busyLabel !== null) return;
+    const includesCommit =
+      action === "commit" || action === "commit_push" || action === "commit_push_pr";
+    if (requiresDefaultBranchConfirmation(action, gitStatus?.isDefaultRef ?? false)) {
+      const confirmed = await readLocalApi()?.dialogs.confirm(
+        `Push to default branch "${gitStatus?.refName}"? This publishes all unpushed commits on this branch.${includesCommit ? " Staged changes will be committed first." : ""}`,
+      );
+      if (!confirmed) return;
+    }
     const result = await commitAction.run({
       actionId: randomUUID(),
-      action: "commit",
-      stagedOnly: true,
+      action,
+      ...(includesCommit ? { stagedOnly: true } : {}),
     });
     if (result._tag === "Failure") {
+      if (cwd !== null) void refreshStatus({ environmentId, input: { cwd } });
       if (isAtomCommandInterrupted(result)) return;
       const error = squashAtomCommandFailure(result);
+      const phase = isRemoteActionFailure(error) ? error.phase : null;
       toastManager.add({
         type: "error",
-        title: "Commit failed",
+        title:
+          phase === "push"
+            ? "Push failed"
+            : phase === "pr"
+              ? `${terminology.shortLabel} creation failed`
+              : phase === "commit" || action === "commit"
+                ? "Commit failed"
+                : "Source control action failed",
         description: error instanceof Error ? error.message : "An error occurred.",
       });
       return;
     }
-    setSelection(null);
+    if (includesCommit) setSelection(null);
     toastManager.add({
       type: "success",
       title: result.value.toast.title,
@@ -472,11 +514,67 @@ export function StagingPanel(props: {
   const hasConflicts = (staging?.unstaged ?? []).some((file) => file.change === "conflicted");
   const commitDisabledReason = !commitAction.isAllowed
     ? "This connection cannot change source control."
-    : (staging?.staged.length ?? 0) === 0
-      ? "Stage files to commit them."
-      : hasConflicts
-        ? "Resolve merge conflicts first."
-        : null;
+    : moving
+      ? "Wait for staged files to finish updating."
+      : (staging?.staged.length ?? 0) === 0
+        ? "Stage files to commit them."
+        : hasConflicts
+          ? "Resolve merge conflicts first."
+          : null;
+  const terminology = changeRequestTerminologyFor(gitStatus ?? null);
+  const publishDisabledReason = !commitAction.isAllowed
+    ? "This connection cannot change source control."
+    : moving
+      ? "Wait for staged files to finish updating."
+      : !gitStatus
+        ? "Git status is unavailable."
+        : gitStatus.refName === null
+          ? "Check out a branch before publishing."
+          : gitStatus.behindCount > 0
+            ? "Branch is behind upstream. Pull/rebase before publishing."
+            : null;
+  const prDisabledReason =
+    publishDisabledReason ??
+    (gitStatus?.isDefaultRef
+      ? `Check out a feature branch before creating a ${terminology.singular}.`
+      : null);
+  const hasStagedFiles = (staging?.staged.length ?? 0) > 0;
+  const commitChoices: StagingCommitChoice[] = [
+    { id: "commit", label: "Commit", disabledReason: commitDisabledReason },
+  ];
+  if (gitStatus?.hasPrimaryRemote) {
+    commitChoices.push({
+      id: "commit_push",
+      label: "Commit & push",
+      disabledReason: commitDisabledReason ?? publishDisabledReason,
+    });
+    if (gitStatus.pr?.state !== "open") {
+      commitChoices.push({
+        id: "commit_push_pr",
+        label: `Commit, push & create ${terminology.shortLabel}`,
+        disabledReason: commitDisabledReason ?? prDisabledReason,
+      });
+    }
+    if (!hasStagedFiles) {
+      commitChoices.push({
+        id: "push",
+        label: "Push",
+        disabledReason:
+          publishDisabledReason ?? (gitStatus.aheadCount > 0 ? null : "No local commits to push."),
+      });
+      if (gitStatus.pr?.state !== "open") {
+        commitChoices.push({
+          id: "create_pr",
+          label: `Create ${terminology.shortLabel}`,
+          disabledReason:
+            prDisabledReason ??
+            ((gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) > 0
+              ? null
+              : `No commits to include in a ${terminology.singular}.`),
+        });
+      }
+    }
+  }
 
   if (cwd === null) {
     return <StagingMessage>Open a project to stage changes.</StagingMessage>;
@@ -805,15 +903,12 @@ export function StagingPanel(props: {
           {renderList("staged")}
         </div>
         <footer className="shrink-0 border-t border-border p-2">
-          <Button
-            className="w-full"
-            size="compact"
-            disabled={commitDisabledReason !== null || commitAction.isPending}
-            title={commitDisabledReason ?? "Commit staged changes with a generated message"}
-            onClick={() => void commit()}
-          >
-            {commitAction.isPending ? "Committing..." : "Commit"}
-          </Button>
+          <StagingCommitControl
+            commit={commitChoices[0]!}
+            moreChoices={commitChoices.slice(1)}
+            busyLabel={busyLabel}
+            onSelect={(action) => void runCommitAction(action)}
+          />
         </footer>
       </aside>
     </div>

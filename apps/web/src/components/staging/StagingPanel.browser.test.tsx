@@ -1,17 +1,29 @@
 import {
   EnvironmentId,
+  SourceControlProviderKind,
   type VcsStagingFile,
   type VcsStagingStatusResult,
+  type VcsStatusResult,
 } from "@t3tools/contracts";
+import {
+  EMPTY_VCS_ACTION_STATE,
+  VcsActionRemoteFailureError,
+  type VcsActionState,
+} from "@t3tools/client-runtime/state/vcs";
+import { Cause } from "effect";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 const state = vi.hoisted(() => ({
   staging: null as unknown as VcsStagingStatusResult,
+  status: null as unknown as VcsStatusResult,
+  progress: null as unknown as VcsActionState,
+  allowed: true,
   stage: vi.fn(),
   unstage: vi.fn(),
   discard: vi.fn(),
   commit: vi.fn(),
+  refresh: vi.fn(),
   confirm: vi.fn(),
   openFile: vi.fn(),
   insertTextAtEnd: vi.fn(),
@@ -25,20 +37,30 @@ vi.mock(import("~/state/vcs"), async (importOriginal) => {
   return {
     ...actual,
     vcsStatusRevalidation: (() => Atom.make(0)) as never,
+    vcsActionManager: {
+      ...actual.vcsActionManager,
+      stateAtom: (() => Atom.make(state.progress)) as never,
+    },
     vcsEnvironment: {
       ...actual.vcsEnvironment,
       stagingStatus: (() => "staging-status") as never,
+      status: (() => "git-status") as never,
       stagingFileContents: (() => "file-contents") as never,
       stagePaths: command(state.stage) as never,
       unstagePaths: command(state.unstage) as never,
       discardPaths: command(state.discard) as never,
+      refreshStatus: command(state.refresh) as never,
     },
   };
 });
 vi.mock(import("~/state/query"), async (importOriginal) => ({
   ...(await importOriginal()),
   useEnvironmentQuery: ((atom: unknown) =>
-    atom === "staging-status" ? { data: state.staging } : { data: undefined }) as never,
+    atom === "staging-status"
+      ? { data: state.staging }
+      : atom === "git-status"
+        ? { data: state.status }
+        : { data: undefined }) as never,
 }));
 vi.mock(import("~/state/use-atom-command"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -48,7 +70,7 @@ vi.mock(import("~/state/sourceControlActions"), async (importOriginal) => ({
   ...(await importOriginal()),
   useGitStackedAction: (() => ({
     run: state.commit,
-    isAllowed: true,
+    isAllowed: state.allowed,
     isPending: false,
   })) as never,
 }));
@@ -74,6 +96,7 @@ import { ComposerHandleContext } from "~/composerHandleContext";
 import { dismissContextMenu } from "~/contextMenuFallback";
 import { render } from "../../../test/render";
 import { StagingPanel } from "./StagingPanel";
+import { toastManager } from "~/components/ui/toast";
 
 const ENVIRONMENT_ID = EnvironmentId.make("env-staging");
 // The project is a subfolder of the repository, so status paths start with "app/".
@@ -86,7 +109,13 @@ const file = (
   previousPath: string | null = null,
 ): VcsStagingFile => ({ path, change, previousPath }) as VcsStagingFile;
 
-function setup(overrides: Partial<VcsStagingStatusResult> = {}) {
+function setup(
+  overrides: Partial<VcsStagingStatusResult> = {},
+  statusOverrides: Partial<VcsStatusResult> = {},
+  progressOverrides: Partial<VcsActionState> = {},
+) {
+  state.allowed = true;
+  state.progress = { ...EMPTY_VCS_ACTION_STATE, ...progressOverrides };
   for (const key of ["view", "lists-width", "list-split"]) {
     localStorage.removeItem(`t3code:staging-${key}`);
   }
@@ -101,6 +130,19 @@ function setup(overrides: Partial<VcsStagingStatusResult> = {}) {
     truncated: false,
     ...overrides,
   };
+  state.status = {
+    isRepo: true,
+    hasPrimaryRemote: false,
+    isDefaultRef: false,
+    refName: "feature/staging",
+    hasWorkingTreeChanges: true,
+    workingTree: { files: [], insertions: 0, deletions: 0 },
+    hasUpstream: true,
+    aheadCount: 0,
+    behindCount: 0,
+    pr: null,
+    ...statusOverrides,
+  };
   for (const command of [state.stage, state.unstage, state.discard]) {
     // A new status object stands for the refetch every index write triggers.
     command.mockReset().mockImplementation(async () => {
@@ -112,6 +154,7 @@ function setup(overrides: Partial<VcsStagingStatusResult> = {}) {
     .mockReset()
     .mockResolvedValue({ _tag: "Success", value: { toast: { title: "Ok" } } });
   state.confirm.mockReset();
+  state.refresh.mockReset().mockResolvedValue(SUCCESS);
   state.openFile.mockReset().mockResolvedValue(undefined);
   state.insertTextAtEnd.mockReset().mockReturnValue(true);
   const composer = { current: { insertTextAtEnd: state.insertTextAtEnd } } as never;
@@ -341,6 +384,9 @@ it("commits only staged changes and blocks the commit while conflicts remain", a
   expect(state.commit).toHaveBeenCalledWith(
     expect.objectContaining({ action: "commit", stagedOnly: true }),
   );
+  await expect
+    .element(page.getByRole("button", { name: "More commit actions" }))
+    .not.toBeInTheDocument();
 
   state.staging = { ...state.staging, unstaged: [file("app/conflict.ts", "conflicted")] };
   await screen.rerender(
@@ -350,8 +396,162 @@ it("commits only staged changes and blocks the commit while conflicts remain", a
   );
   await expect
     .element(page.getByRole("button", { name: "Commit", exact: true }))
-    .toHaveAttribute("title", "Resolve merge conflicts first.");
+    .toHaveAccessibleDescription("Resolve merge conflicts first.");
   await expect.element(page.getByRole("button", { name: "Commit", exact: true })).toBeDisabled();
+});
+
+it.each([
+  ["Commit & push", "commit_push"],
+  ["Commit, push & create PR", "commit_push_pr"],
+])("runs %s with only staged files", async (label, action) => {
+  await using _screen = await setup({}, { hasPrimaryRemote: true });
+  await userEvent.click(page.getByRole("button", { name: "More commit actions" }));
+  await clickMenuItem(label);
+  expect(state.commit).toHaveBeenCalledWith(expect.objectContaining({ action, stagedOnly: true }));
+});
+
+it.each([
+  ["Push", "push"],
+  ["Create PR", "create_pr"],
+])("allows %s without staged files and never commits unstaged edits", async (label, action) => {
+  await using _screen = await setup(
+    { staged: [] },
+    { hasPrimaryRemote: true, aheadCount: 1, aheadOfDefaultCount: 1 },
+  );
+  await expect.element(page.getByRole("button", { name: "Commit", exact: true })).toBeDisabled();
+  await userEvent.click(page.getByRole("button", { name: "More commit actions" }));
+  await clickMenuItem(label);
+  expect(state.commit).toHaveBeenCalledWith(expect.objectContaining({ action }));
+  expect(state.commit.mock.calls[0]![0]).not.toHaveProperty("stagedOnly");
+});
+
+it("requires confirmation before publishing staged changes to the default branch", async () => {
+  await using _screen = await setup(
+    {},
+    { hasPrimaryRemote: true, isDefaultRef: true, refName: "main" },
+  );
+  state.confirm.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+  await userEvent.click(page.getByRole("button", { name: "More commit actions" }));
+  await expect
+    .element(page.getByRole("menuitem", { name: /Commit, push & create PR/ }))
+    .toBeDisabled();
+  await clickMenuItem("Commit & push");
+  expect(state.confirm).toHaveBeenCalledWith(expect.stringContaining('default branch "main"'));
+  expect(state.commit).not.toHaveBeenCalled();
+  await userEvent.click(page.getByRole("button", { name: "More commit actions" }));
+  await clickMenuItem("Commit & push");
+  expect(state.commit).toHaveBeenCalledWith(
+    expect.objectContaining({ action: "commit_push", stagedOnly: true }),
+  );
+});
+
+it.each([{ refName: null }, { behindCount: 1 }])(
+  "blocks publishing for an unavailable branch: %j",
+  async (status) => {
+    await using _screen = await setup({}, { hasPrimaryRemote: true, ...status });
+    await userEvent.click(page.getByRole("button", { name: "More commit actions" }));
+    await expect.element(page.getByRole("menuitem", { name: /Commit & push/ })).toBeDisabled();
+    await expect
+      .element(page.getByRole("menuitem", { name: /Commit, push & create PR/ }))
+      .toBeDisabled();
+    expect(state.commit).not.toHaveBeenCalled();
+  },
+);
+
+it("updates an existing PR by pushing, and uses MR terminology for GitLab", async () => {
+  await using screen = await setup(
+    {},
+    {
+      hasPrimaryRemote: true,
+      sourceControlProvider: {
+        kind: SourceControlProviderKind.make("gitlab"),
+        name: "GitLab",
+        baseUrl: "https://gitlab.com",
+      },
+    },
+  );
+  await userEvent.click(page.getByRole("button", { name: "More commit actions" }));
+  await clickMenuItem("Commit, push & create MR");
+  expect(state.commit).toHaveBeenCalledWith(
+    expect.objectContaining({ action: "commit_push_pr", stagedOnly: true }),
+  );
+  state.status = {
+    ...state.status,
+    pr: {
+      number: 1,
+      title: "Existing",
+      url: "https://gitlab.com/example/project/-/merge_requests/1",
+      baseRef: "main",
+      headRef: "feature/staging",
+      state: "open",
+    },
+  };
+  await screen.rerender(
+    <ComposerHandleContext value={null}>
+      <StagingPanel environmentId={ENVIRONMENT_ID} cwd={CWD} repositoryRoot="/repo" visible />
+    </ComposerHandleContext>,
+  );
+  await userEvent.click(page.getByRole("button", { name: "More commit actions" }));
+  await expect
+    .element(page.getByRole("menuitem", { name: "Commit & push", exact: true }))
+    .toBeVisible();
+  await expect.element(page.getByRole("menuitem", { name: /create MR/ })).not.toBeInTheDocument();
+});
+
+it("reports a push failure separately from committing", async () => {
+  await using _screen = await setup({}, { hasPrimaryRemote: true });
+  using toast = vi.spyOn(toastManager, "add");
+  state.commit.mockResolvedValueOnce({
+    _tag: "Failure",
+    cause: Cause.fail(
+      new VcsActionRemoteFailureError({
+        actionId: "action",
+        transportActionId: "transport",
+        action: "commit_push",
+        environmentId: ENVIRONMENT_ID,
+        cwd: CWD,
+        phase: "push",
+        remoteMessageLength: 0,
+      }),
+    ),
+  });
+  await userEvent.click(page.getByRole("button", { name: "More commit actions" }));
+  await clickMenuItem("Commit & push");
+  expect(toast).toHaveBeenCalledWith(
+    expect.objectContaining({ type: "error", title: "Push failed" }),
+  );
+  expect(state.refresh).toHaveBeenCalledWith({
+    environmentId: ENVIRONMENT_ID,
+    input: { cwd: CWD },
+  });
+});
+
+it("reflects a Git action started elsewhere and blocks another action", async () => {
+  await using _screen = await setup(
+    {},
+    { hasPrimaryRemote: true },
+    { isRunning: true, currentLabel: "Pushing..." },
+  );
+  await expect.element(page.getByRole("button", { name: "Pushing..." })).toBeDisabled();
+  await expect.element(page.getByRole("button", { name: "More commit actions" })).toBeDisabled();
+  document.querySelector<HTMLButtonElement>('[aria-label="Commit actions"] button')!.click();
+  expect(state.commit).not.toHaveBeenCalled();
+});
+
+it("blocks commit and publish choices when source control permission is absent", async () => {
+  await using screen = await setup({}, { hasPrimaryRemote: true });
+  state.allowed = false;
+  await screen.rerender(
+    <ComposerHandleContext value={null}>
+      <StagingPanel environmentId={ENVIRONMENT_ID} cwd={CWD} repositoryRoot="/repo" visible />
+    </ComposerHandleContext>,
+  );
+  await expect.element(page.getByRole("button", { name: "Commit", exact: true })).toBeDisabled();
+  await userEvent.click(page.getByRole("button", { name: "More commit actions" }));
+  for (const index of [0, 1, 2]) {
+    await expect.element(page.getByRole("menuitem").nth(index)).toBeDisabled();
+  }
+  expect(state.commit).not.toHaveBeenCalled();
 });
 
 it("resizes the file lists and their split by dragging, and resets on double-click", async () => {
