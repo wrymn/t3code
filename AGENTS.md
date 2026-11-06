@@ -145,6 +145,15 @@ For mobile verification, a missing or outdated native client is an install step,
 
 `evals/` checks how real models behave with T3 Code's model-facing text: agent instructions, MCP tool descriptions and schemas, and generated titles. Before you change that text, read [evals/README.md](evals/README.md) and run the evals it names. When you fix a model behavior bug, add a case that fails before the fix.
 
+## Local fork workflow
+
+- The local updater builds the upstream release tag plus `main` and every local `fork/*` branch. `fork-release` is disposable build output; never put original fixes there.
+- Improvements intended for Lukas's installed fork must land on an appropriate `fork/*` branch before completion. Reuse the owning feature branch when possible. Keep experiments outside `fork/*` until they are ready to ship.
+- Before declaring a local improvement ready for update, verify its completed commits are reachable from `main` or a `fork/*` branch. A commit on `feature/*` or `t3/*` alone is not included.
+- Keep shared fork instructions on `main`. New independent fork branches should start from `main`; existing branches receive instruction updates by merging `main`.
+- Report separately whether changes are committed, included in a successful build, or installed and running. A successful build does not establish installation.
+- Before deleting a temporary branch, verify its commits are preserved in the owning fork branch and its worktree is clean. Remove the redundant worktree and branch when cleanup is requested.
+
 ## Pull requests
 
 - Never make a PR unless the developer explicitly asks you to do so.
