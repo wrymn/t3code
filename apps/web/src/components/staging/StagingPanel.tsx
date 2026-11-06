@@ -86,8 +86,14 @@ import {
   type StagingRow,
   type StagingView,
 } from "./stagingTree";
+import {
+  applyStagingMoves,
+  isStagingMoveActive,
+  settleStagingMove,
+  type StagingListKind,
+  type StagingMove,
+} from "./stagingMoves";
 
-type StagingListKind = "unstaged" | "staged";
 const isRemoteActionFailure = Schema.is(VcsActionRemoteFailureError);
 
 /** Keys are row keys: file paths, or directory paths ending in a slash. */
@@ -109,6 +115,8 @@ const CHANGE_LABELS: Record<VcsStagingFile["change"], { letter: string; classNam
 };
 
 const DRAG_MIME = "application/x-t3-staging";
+// Drag data is unreadable until drop, but types are, so the source list rides in one.
+const dragSourceMime = (list: StagingListKind) => `${DRAG_MIME}-from-${list}`;
 const StagingViewSchema = Schema.Literals(["list", "tree"]);
 const DEFAULT_LISTS_WIDTH = 320;
 const MIN_PANE_WIDTH = 200;
@@ -192,19 +200,13 @@ export function StagingPanel(props: {
       ? null
       : vcsEnvironment.stagingStatus({ environmentId, input: { cwd } }),
   );
-  const staging = stagingQuery.data;
-  // Moved files leave their list right away; waiting for the refetch would put the
-  // successor's highlight on the row below for a few frames.
-  const [moved, setMoved] = useState<{
-    readonly list: StagingListKind;
-    readonly paths: ReadonlySet<string>;
-    readonly staging: typeof staging;
-  } | null>(null);
-  const isMovedAway = (list: StagingListKind, file: VcsStagingFile) =>
-    moved !== null &&
-    moved.staging === staging &&
-    moved.list === list &&
-    moved.paths.has(file.path);
+  // Moves show before git confirms them; the next status the server sends replaces the guess.
+  const [moves, setMoves] = useState<ReadonlyArray<StagingMove>>([]);
+  const nextMoveId = useRef(0);
+  const isActiveMove = (move: StagingMove) => isStagingMoveActive(move, stagingQuery.dataUpdatedAt);
+  const activeMoves = moves.filter(isActiveMove);
+  const staging = stagingQuery.data && applyStagingMoves(stagingQuery.data, activeMoves);
+  const moving = activeMoves.some((move) => move.settledAt === null);
   const query = filter?.trim().toLowerCase() ?? "";
   const matches = (file: VcsStagingFile) => query === "" || file.path.toLowerCase().includes(query);
   const testFileCount = new Set(
@@ -217,10 +219,8 @@ export function StagingPanel(props: {
     matches(file) && !(hidingTests && isTestChangedFile(file.path));
   // Everything that acts on rows, including folder moves and select-all, sees only shown files.
   const lists: Record<StagingListKind, ReadonlyArray<VcsStagingFile>> = {
-    unstaged: (staging?.unstaged ?? []).filter(
-      (file) => shows(file) && !isMovedAway("unstaged", file),
-    ),
-    staged: (staging?.staged ?? []).filter((file) => shows(file) && !isMovedAway("staged", file)),
+    unstaged: (staging?.unstaged ?? []).filter(shows),
+    staged: (staging?.staged ?? []).filter(shows),
   };
   const rows: Record<StagingListKind, ReadonlyArray<StagingRow>> = {
     unstaged: stagingRows(lists.unstaged, view, collapsed.unstaged),
@@ -249,7 +249,6 @@ export function StagingPanel(props: {
   const discardPaths = useAtomCommand(vcsEnvironment.discardPaths);
   const fileContextMenu = useFileContextMenu(environmentId);
   const composerRef = useComposerHandleContext();
-  const [moving, setMoving] = useState(false);
   const commitAction = useGitStackedAction({ environmentId, cwd });
   const refreshStatus = useAtomCommand(vcsEnvironment.refreshStatus, { reportFailure: false });
   const gitStatusQuery = useEnvironmentQuery(
@@ -277,6 +276,7 @@ export function StagingPanel(props: {
   const move = (from: StagingListKind, files: ReadonlyArray<VcsStagingFile>) =>
     applyToFiles(
       from,
+      from === "unstaged" ? "staged" : "unstaged",
       files,
       from === "unstaged" ? stagePaths : unstagePaths,
       from === "unstaged" ? "Stage failed" : "Unstage failed",
@@ -284,12 +284,12 @@ export function StagingPanel(props: {
 
   const applyToFiles = async (
     from: StagingListKind,
+    to: StagingListKind | null,
     files: ReadonlyArray<VcsStagingFile>,
     command: typeof stagePaths,
     failureTitle: string,
   ) => {
-    if (cwd === null || files.length === 0 || moving || !canStage) return;
-    setMoving(true);
+    if (cwd === null || files.length === 0 || !canStage) return;
     const movedPaths = new Set(files.map((file) => file.path));
     const remainingRows = stagingRows(
       lists[from].filter((file) => !movedPaths.has(file.path)),
@@ -297,9 +297,22 @@ export function StagingPanel(props: {
       collapsed[from],
     );
     const next = stagingSuccessorKey(rows[from], remainingRows, movedPaths);
+    const id = (nextMoveId.current += 1);
+    flushSync(() => {
+      setMoves((current) => [
+        ...current.filter(isActiveMove),
+        { id, from, to, files, settledAt: null },
+      ]);
+      setSelection(next ? { list: from, anchor: next, keys: new Set([next]) } : null);
+    });
+    // With no row left, the panel keeps focus so Escape and find still reach it.
+    if (next) document.getElementById(rowId(from, next))?.focus();
+    else panelRef.current?.focus();
+
+    // The command scheduler runs index writes for one cwd in click order.
     const result = await command({ environmentId, input: { cwd, paths: pathsFor(files) } });
-    setMoving(false);
     if (result._tag === "Failure") {
+      setMoves((current) => current.filter((entry) => entry.id !== id));
       if (isAtomCommandInterrupted(result)) return;
       const error = squashAtomCommandFailure(result);
       toastManager.add({
@@ -309,11 +322,8 @@ export function StagingPanel(props: {
       });
       return;
     }
-    flushSync(() => {
-      setMoved({ list: from, paths: movedPaths, staging });
-      setSelection(next ? { list: from, anchor: next, keys: new Set([next]) } : null);
-    });
-    if (next) document.getElementById(rowId(from, next))?.focus();
+    const settled = settleStagingMove(Date.now);
+    setMoves((current) => current.map((entry) => (entry.id === id ? settled(entry) : entry)));
   };
 
   const runCommitAction = async (action: StagingCommitChoiceId) => {
@@ -451,7 +461,7 @@ export function StagingPanel(props: {
       `Discard changes to ${subject}?${deletes ? " Untracked files will be deleted." : ""} This cannot be undone.`,
       { variant: "destructive" },
     );
-    if (confirmed) await applyToFiles("unstaged", files, discardPaths, "Discard failed");
+    if (confirmed) await applyToFiles("unstaged", null, files, discardPaths, "Discard failed");
   };
 
   const onRowContextMenu = async (list: StagingListKind, row: StagingRow, event: MouseEvent) => {
@@ -530,6 +540,7 @@ export function StagingPanel(props: {
     if (!inSelection) setSelection({ list, anchor: row.key, keys: new Set([row.key]) });
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData(DRAG_MIME, JSON.stringify({ from: list, keys }));
+    event.dataTransfer.setData(dragSourceMime(list), "");
   };
 
   const onDrop = (target: StagingListKind, event: DragEvent) => {
@@ -792,7 +803,7 @@ export function StagingPanel(props: {
         aria-selected={isSelected}
         aria-expanded={row.kind === "directory" ? row.expanded : undefined}
         tabIndex={isSelected || (selection === null && isFirst) ? 0 : -1}
-        draggable={canStage && !moving}
+        draggable={canStage}
         style={{ paddingInlineStart: `${8 + row.depth * 16}px` }}
         className={cn(
           "relative flex h-6 cursor-default items-center gap-1.5 rounded-md pe-2 text-xs text-foreground outline-none select-none focus:ring-1 focus:ring-ring focus:ring-inset",
@@ -858,12 +869,16 @@ export function StagingPanel(props: {
     return (
       <section
         aria-label={isUnstaged ? "Unstaged changes" : "Staged changes"}
-        className={cn("flex min-h-0 basis-0 flex-col", dropTarget === list && "bg-accent/40")}
+        className={cn(
+          "flex min-h-0 basis-0 flex-col ring-1 ring-transparent ring-inset transition-[background-color,box-shadow] duration-150 ease-out motion-reduce:transition-none",
+          dropTarget === list && "bg-primary/5 ring-primary/60",
+        )}
         style={{
           flexGrow: isUnstaged ? "var(--staging-split)" : "calc(1 - var(--staging-split))",
         }}
         onDragOver={(event) => {
-          if (!event.dataTransfer.types.includes(DRAG_MIME)) return;
+          const { types } = event.dataTransfer;
+          if (!types.includes(DRAG_MIME) || types.includes(dragSourceMime(list))) return;
           event.preventDefault();
           if (dropTarget !== list) setDropTarget(list);
         }}
@@ -886,7 +901,7 @@ export function StagingPanel(props: {
                     variant="ghost"
                     size="icon-xs"
                     // A truncated status does not list every file, so "all" would be a lie.
-                    disabled={!canStage || moving || staging?.truncated !== false}
+                    disabled={!canStage || staging?.truncated !== false}
                     onClick={() => void move(list, files)}
                   />
                 }
@@ -905,7 +920,7 @@ export function StagingPanel(props: {
           <Button
             size="compact"
             variant="outline"
-            disabled={!canStage || moving || chosen.length === 0}
+            disabled={!canStage || chosen.length === 0}
             onClick={() => void move(list, chosen)}
           >
             {isUnstaged ? "Stage" : "Unstage"}
@@ -914,7 +929,7 @@ export function StagingPanel(props: {
         <div role="listbox" aria-multiselectable className="min-h-0 flex-1 overflow-y-auto p-1.5">
           {files.length === 0 ? (
             <p className="px-3 py-2 text-xs text-muted-foreground">
-              {(staging?.[list] ?? []).some((file) => matches(file) && !isMovedAway(list, file))
+              {(staging?.[list] ?? []).some(matches)
                 ? "Only hidden test files."
                 : (staging?.[list].length ?? 0) > 0
                   ? "No matches."
@@ -933,7 +948,8 @@ export function StagingPanel(props: {
   return (
     <div
       ref={panelRef}
-      className="flex h-full min-h-0 w-full"
+      tabIndex={-1}
+      className="flex h-full min-h-0 w-full outline-none"
       data-staging-panel
       onKeyDown={(event) => {
         if (event.defaultPrevented) return;

@@ -177,6 +177,8 @@ export function RightPanelSurfaceContent(props: {
       return (
         <Suspense fallback={null}>
           <StagingPanel
+            // Unconfirmed moves and selection belong to one repository.
+            key={`${props.environmentId}:${props.gitCwd}`}
             environmentId={props.environmentId}
             cwd={props.gitCwd}
             repositoryRoot={props.files.repositoryRoot}

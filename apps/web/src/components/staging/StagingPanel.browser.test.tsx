@@ -61,6 +61,7 @@ vi.mock("~/components/diffs/StyledDiffCodeView", () => ({
 
 const state = vi.hoisted(() => ({
   staging: null as unknown as VcsStagingStatusResult,
+  stagingUpdatedAt: 0,
   status: null as unknown as VcsStatusResult,
   progress: null as unknown as VcsActionState,
   allowed: true,
@@ -103,7 +104,7 @@ vi.mock(import("~/state/query"), async (importOriginal) => ({
   ...(await importOriginal()),
   useEnvironmentQuery: ((atom: unknown) =>
     atom === "staging-status"
-      ? { data: state.staging }
+      ? { data: state.staging, dataUpdatedAt: state.stagingUpdatedAt }
       : atom === "git-status"
         ? { data: state.status }
         : atom === "file-contents"
@@ -197,10 +198,12 @@ function setup(
     pr: null,
     ...statusOverrides,
   };
+  state.stagingUpdatedAt = 0;
   for (const command of [state.stage, state.unstage, state.discard]) {
-    // A new status object stands for the refetch every index write triggers.
+    // A newer status stands for the refetch every index write triggers.
     command.mockReset().mockImplementation(async () => {
       state.staging = { ...state.staging };
+      state.stagingUpdatedAt = Number.MAX_SAFE_INTEGER;
       return SUCCESS;
     });
   }
@@ -252,17 +255,33 @@ async function clickMenuItem(name: string) {
 
 it("stages and unstages by double-click, keyboard, and folder drag", async () => {
   await using _screen = await setup();
+  using toast = vi.spyOn(toastManager, "add");
 
-  // Before the refetch lands, the moved row is already gone and its successor selected.
-  state.stage.mockResolvedValueOnce(SUCCESS);
+  // The row moves before git answers, and its successor is selected.
+  let finishStaging = (_result: typeof SUCCESS) => {};
+  state.stage.mockReturnValueOnce(new Promise((resolve) => (finishStaging = resolve)));
   await userEvent.dblClick(row("unstaged", "app/notes.md"));
   expect(state.stage).toHaveBeenCalledWith(pathsInput(["app/notes.md"]));
-  await vi.waitFor(() => expect(row("unstaged", "app/notes.md")).toBeNull());
+  expect(row("unstaged", "app/notes.md")).toBeNull();
+  expect(row("staged", "app/notes.md")).not.toBeNull();
   expect(selectedKeys("unstaged")).toEqual(["README.md"]);
 
-  // A rename moves two index entries.
+  // A failed move puts its row back, without waiting for the move before it.
+  state.unstage.mockResolvedValueOnce({ _tag: "Failure", cause: Cause.fail(new Error("locked")) });
   await userEvent.dblClick(row("staged", "app/lib/new.ts"));
+  // A rename moves two index entries.
   expect(state.unstage).toHaveBeenCalledWith(pathsInput(["app/lib/old.ts", "app/lib/new.ts"]));
+  await vi.waitFor(() => expect(row("staged", "app/lib/new.ts")).not.toBeNull());
+  expect(row("unstaged", "app/lib/new.ts")).toBeNull();
+  expect(toast).toHaveBeenCalledWith(
+    expect.objectContaining({ type: "error", title: "Unstage failed" }),
+  );
+
+  // The status fetched after the stage settles wins; this fixture still lists the file unstaged.
+  state.stagingUpdatedAt = Number.MAX_SAFE_INTEGER;
+  finishStaging(SUCCESS);
+  await vi.waitFor(() => expect(row("unstaged", "app/notes.md")).not.toBeNull());
+  expect(row("staged", "app/notes.md")).toBeNull();
 
   // Select-all stays inside the focused list.
   await userEvent.click(row("unstaged", "README.md"));
