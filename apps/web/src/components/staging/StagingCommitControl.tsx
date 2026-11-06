@@ -43,7 +43,9 @@ export function StagingCommitControl(props: {
   return (
     <ButtonGroup ref={anchorRef} className="w-full" aria-label="Commit actions">
       <Tooltip>
+        {/* Opens instantly so the target branch or blocking reason is seen before clicking Commit. */}
         <TooltipTrigger
+          delay={0}
           render={
             <Button
               className="min-w-0 flex-1"
