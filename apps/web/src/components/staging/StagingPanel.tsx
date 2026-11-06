@@ -552,6 +552,11 @@ export function StagingPanel(props: {
         : hasConflicts
           ? "Resolve merge conflicts first."
           : null;
+  const commitTargetLabel = !gitStatus?.isRepo
+    ? null
+    : gitStatus.refName !== null
+      ? `Commits to ${gitStatus.refName}`
+      : "Commits to detached HEAD";
   const terminology = changeRequestTerminologyFor(gitStatus ?? null);
   const publishDisabledReason = !commitAction.isAllowed
     ? "This connection cannot change source control."
@@ -1010,6 +1015,7 @@ export function StagingPanel(props: {
             commit={commitChoices[0]!}
             moreChoices={commitChoices.slice(1)}
             busyLabel={busyLabel}
+            targetLabel={commitTargetLabel}
             onSelect={(action) => void runCommitAction(action)}
           />
         </footer>

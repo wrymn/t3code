@@ -30,12 +30,15 @@ export function StagingCommitControl(props: {
   readonly moreChoices: readonly StagingCommitChoice[];
   /** Shared in-flight status such as "Pushing...". Disables both buttons while set. */
   readonly busyLabel: string | null;
+  /** Shown on hover when commit can run, e.g. "Commits to main". */
+  readonly targetLabel: string | null;
   readonly onSelect: (id: StagingCommitChoiceId) => void;
 }) {
-  const { commit, moreChoices, busyLabel, onSelect } = props;
+  const { commit, moreChoices, busyLabel, targetLabel, onSelect } = props;
   const anchorRef = useRef<HTMLDivElement>(null);
   const reasonId = useId();
   const commitReason = busyLabel === null ? (commit.disabledReason ?? null) : null;
+  const commitTooltip = busyLabel === null ? (commitReason ?? targetLabel) : null;
 
   return (
     <ButtonGroup ref={anchorRef} className="w-full" aria-label="Commit actions">
@@ -46,7 +49,7 @@ export function StagingCommitControl(props: {
               className="min-w-0 flex-1"
               size="compact"
               aria-disabled={commitReason !== null || busyLabel !== null || undefined}
-              aria-describedby={commitReason !== null ? reasonId : undefined}
+              aria-describedby={commitTooltip !== null ? reasonId : undefined}
               onClick={() => {
                 if (commitReason === null && busyLabel === null) onSelect(commit.id);
               }}
@@ -62,11 +65,11 @@ export function StagingCommitControl(props: {
             <span className="truncate">{commit.label}</span>
           )}
         </TooltipTrigger>
-        {commitReason !== null ? <TooltipPopup side="top">{commitReason}</TooltipPopup> : null}
+        {commitTooltip !== null ? <TooltipPopup side="top">{commitTooltip}</TooltipPopup> : null}
       </Tooltip>
-      {commitReason !== null ? (
+      {commitTooltip !== null ? (
         <span id={reasonId} className="sr-only">
-          {commitReason}
+          {commitTooltip}
         </span>
       ) : null}
       {moreChoices.length > 0 ? (
