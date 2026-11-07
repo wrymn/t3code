@@ -340,6 +340,28 @@ it("waits for nested work and retains the report across monitor acknowledgements
   });
   assert.equal(progress.state, "result_available");
   assert.equal(progress.resultRun?.id, report.id);
+  for (const status of ["queued", "starting", "running", "completed", "interrupted"] as const) {
+    const continuation = { ...monitor, status };
+    const awaited = delegatedTaskProgress({
+      ...projection,
+      runs: [run, report, continuation],
+      messages: [
+        {
+          ...artifacts.message,
+          runId: continuation.id,
+          notification: {
+            source: { kind: "monitor" },
+            outcome: "completed",
+            summary: "Awaited replay finished",
+            awaited: true,
+          },
+        },
+      ],
+    });
+    const terminal = status === "completed" || status === "interrupted";
+    assert.equal(awaited.state, terminal ? "result_available" : "working");
+    assert.equal(awaited.resultRun?.id, terminal ? continuation.id : report.id);
+  }
 });
 
 it("exposes the provider failure rather than a progress message from the failed run", () => {

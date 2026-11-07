@@ -11,6 +11,7 @@ type NotificationOutcome = OrchestrationV2Notification["outcome"];
 
 export type BackgroundWork = {
   readonly label?: string | undefined;
+  readonly awaited?: true | undefined;
 } & (
   | { readonly kind: "subagent"; readonly childThreadId?: ThreadId | undefined }
   | { readonly kind: "command"; readonly exitCode?: number | undefined }
@@ -135,6 +136,7 @@ export function backgroundWorkNotification(
   const outcome = combinedOutcome(reports.map((report) => report.outcome));
   return {
     source: reportsSource([first, ...rest]),
+    ...(reports.some((report) => report.awaited === true) ? { awaited: true as const } : {}),
     outcome,
     summary: reportsSummary([first, ...rest], outcome),
   };

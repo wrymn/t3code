@@ -8841,6 +8841,35 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.deepEqual(roster, [
           { taskId: longRunning.taskId, kind: "monitor", description: "Monitor 0" },
         ]);
+        yield* harness.runtime.awaitBackgroundTasks!({
+          providerThread: harness.providerThread,
+          taskIds: [longRunning.taskId],
+          awaited: true,
+        });
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [],
+            uuid: nextUuid(),
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.until(
+          () =>
+            providerThreadRosterEvents(harness.events).at(-1)?.providerThread.pendingBackgroundTasks
+              ?.length === 0,
+        );
+        yield* Queue.offer(harness.sdkMessages, longRunning.end);
+        yield* Queue.offer(harness.sdkMessages, wakeAssistant);
+        const continuation = yield* Queue.take(harness.continuationReceipts);
+        assert.deepEqual(continuation.notification, {
+          source: { kind: "monitor" },
+          awaited: true,
+          outcome: "completed",
+          summary: "66 monitors finished",
+        });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

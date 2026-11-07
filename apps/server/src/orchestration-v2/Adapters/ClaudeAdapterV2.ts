@@ -5001,11 +5001,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           nativeThreadId: string,
           message: Extract<SDKMessage, { readonly subtype: "task_notification" }>,
         ): Effect.fn.Return<BackgroundWorkReport> {
+          const remembered = (yield* Ref.get(lastKnownOpaqueTasks)).get(message.task_id);
           const task =
             rosterForNativeThread(
               yield* Ref.get(pendingBackgroundTasksByNativeThread),
               nativeThreadId,
-            ).get(message.task_id) ?? (yield* Ref.get(lastKnownOpaqueTasks)).get(message.task_id);
+            ).get(message.task_id) ?? remembered;
           yield* Ref.update(lastKnownOpaqueTasks, (current) => {
             if (!current.has(message.task_id)) return current;
             const updated = new Map(current);
@@ -5014,15 +5015,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
           const outcome = claudeTaskOutcome(message.status);
           const label = task?.description;
+          const awaited = remembered?.awaited === true ? { awaited: true as const } : {};
           switch (task?.kind) {
             case "subagent":
-              return { kind: "subagent", label, outcome, childThreadId: task.childThreadId };
+              return {
+                kind: "subagent",
+                label,
+                outcome,
+                childThreadId: task.childThreadId,
+                ...awaited,
+              };
             case "monitor":
             case "background_task":
-              return { kind: task.kind, label, outcome };
+              return { kind: task.kind, label, outcome, ...awaited };
             case "command":
             case undefined:
-              return { kind: "command", label, outcome };
+              return { kind: "command", label, outcome, ...awaited };
           }
         });
         const requestedContinuations = yield* Ref.make(new Set<string>());
@@ -5317,6 +5325,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : {}),
             updatedAt: now,
           };
+          yield* rememberOpaqueTasks(providerThread.pendingBackgroundTasks ?? []);
           yield* rememberProviderThread(providerThread);
           yield* emitProviderEvent({
             type: "provider_thread.updated",
