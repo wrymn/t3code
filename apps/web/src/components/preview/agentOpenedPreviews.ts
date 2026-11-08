@@ -16,6 +16,7 @@ import { getClientSettings } from "../../hooks/useSettings";
 import {
   browserMiniPlayerSource,
   type PreviewMiniPlayerSource,
+  previewMiniPlayerSourceKey,
   usePreviewMiniPlayerStore,
 } from "../../previewMiniPlayerStore";
 import {
@@ -211,6 +212,18 @@ export function floatDeviceSurface(
 ): void {
   if (state !== null && !hasLiveSession(state, threadRef.threadId, source)) return;
   usePreviewMiniPlayerStore.getState().open(threadRef, source);
+}
+
+/** A float hidden behind its own panel tab would reappear when the panel closes. */
+export function closeFloatBehindPanel(
+  threadRef: ScopedThreadRef,
+  source: PreviewMiniPlayerSource,
+): void {
+  const miniPlayer = usePreviewMiniPlayerStore.getState();
+  const current = miniPlayer.byThreadKey[scopedThreadKey(threadRef)]?.source;
+  if (current && previewMiniPlayerSourceKey(current) === previewMiniPlayerSourceKey(source)) {
+    miniPlayer.close(threadRef);
+  }
 }
 
 export function resetDeviceSessionBaselinesForTests(): void {

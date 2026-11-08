@@ -20,6 +20,7 @@ import {
 import { useRightPanelStore } from "../../rightPanelStore";
 import {
   applyDeviceSnapshot,
+  closeFloatBehindPanel,
   floatDeviceSurface,
   followPreviewSessions,
   resetDeviceSessionBaselinesForTests,
@@ -191,6 +192,18 @@ describe("floatDeviceSurface", () => {
   it("does not float a device whose session ended", () => {
     setup();
     floatDeviceSurface(ref, source, deviceState({ sessions: [] }));
+    expect(miniPlayerSource()).toBeUndefined();
+  });
+});
+
+describe("closeFloatBehindPanel", () => {
+  it("closes only a float showing the panel's own tab", () => {
+    setup();
+    usePreviewMiniPlayerStore.getState().open(ref, browserMiniPlayerSource("tab_other"));
+    closeFloatBehindPanel(ref, browserMiniPlayerSource("tab_panel"));
+    expect(miniPlayerSource()).toEqual(browserMiniPlayerSource("tab_other"));
+
+    closeFloatBehindPanel(ref, browserMiniPlayerSource("tab_other"));
     expect(miniPlayerSource()).toBeUndefined();
   });
 });
