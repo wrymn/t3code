@@ -27,8 +27,8 @@ import { addBrowserSurface } from "../preview/addBrowserSurface";
 import { focusActivePanelTerminal, focusTerminal } from "../../lib/terminalFocus";
 import { subscribePreviewAction } from "../preview/previewActionBus";
 import { getClientSettings } from "../../hooks/useSettings";
-import { closeFloatBehindPanel, floatDeviceSurface } from "../preview/agentOpenedPreviews";
-import { browserMiniPlayerSource, usePreviewMiniPlayerStore } from "../../previewMiniPlayerStore";
+import { settlePanelPreviewOnClose } from "../preview/agentOpenedPreviews";
+import { browserMiniPlayerSource } from "../../previewMiniPlayerStore";
 import type { threadPullRequestPanelTarget } from "../pullRequest/pullRequestDetail.logic";
 import type { useDeviceState } from "../../state/device";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -175,12 +175,11 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
           : activeRightPanelSurface?.kind === "device" && activeRightPanelSurface.target
             ? ({ kind: "device", ...activeRightPanelSurface.target } as const)
             : null;
-      if (source && !getClientSettings().browserFloatPreviewOnPanelClose) {
-        closeFloatBehindPanel(activeThreadRef, source);
-      } else if (source?.kind === "browser") {
-        usePreviewMiniPlayerStore.getState().open(activeThreadRef, source);
-      } else if (source?.kind === "device") {
-        floatDeviceSurface(activeThreadRef, source, deviceStateLoaded ? deviceState : null);
+      if (source) {
+        settlePanelPreviewOnClose(activeThreadRef, source, {
+          floatOnClose: getClientSettings().browserFloatPreviewOnPanelClose,
+          deviceState: deviceStateLoaded ? deviceState : null,
+        });
       }
       useRightPanelStore.getState().setMaximized(activeThreadRef, false);
       useRightPanelStore.getState().close(activeThreadRef);

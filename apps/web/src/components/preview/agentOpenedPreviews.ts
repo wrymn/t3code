@@ -44,14 +44,13 @@ export function revealServerTabs(
   for (const session of sessions) {
     const force = session.revealRequest?.force === true;
     if (!options.autoShowFloatingPreview && !force) continue;
-    const surface = useRightPanelStore
-      .getState()
-      .byThreadKey[scopedThreadKey(threadRef)]?.surfaces.find(
-        (surface) => surface.kind === "preview" && surface.resourceId === session.tabId,
-      );
+    const panel = useRightPanelStore.getState().byThreadKey[scopedThreadKey(threadRef)];
+    const surface = panel?.surfaces.find(
+      (surface) => surface.kind === "preview" && surface.resourceId === session.tabId,
+    );
     if (surface && force) {
       useRightPanelStore.getState().revealSurface(threadRef, surface.id);
-    } else if (!surface) {
+    } else if (!surface || !panel?.isOpen) {
       usePreviewMiniPlayerStore.getState().open(threadRef, browserMiniPlayerSource(session.tabId));
     }
   }
@@ -214,15 +213,25 @@ export function floatDeviceSurface(
   usePreviewMiniPlayerStore.getState().open(threadRef, source);
 }
 
-/** A float hidden behind its own panel tab would reappear when the panel closes. */
-export function closeFloatBehindPanel(
+/**
+ * Floats a panel's browser or device as the panel closes. With that off, a
+ * float hidden behind the panel tab closes too, or it would reappear.
+ */
+export function settlePanelPreviewOnClose(
   threadRef: ScopedThreadRef,
   source: PreviewMiniPlayerSource,
+  options: { readonly floatOnClose: boolean; readonly deviceState: DeviceServiceState | null },
 ): void {
   const miniPlayer = usePreviewMiniPlayerStore.getState();
-  const current = miniPlayer.byThreadKey[scopedThreadKey(threadRef)]?.source;
-  if (current && previewMiniPlayerSourceKey(current) === previewMiniPlayerSourceKey(source)) {
-    miniPlayer.close(threadRef);
+  if (!options.floatOnClose) {
+    const current = miniPlayer.byThreadKey[scopedThreadKey(threadRef)]?.source;
+    if (current && previewMiniPlayerSourceKey(current) === previewMiniPlayerSourceKey(source)) {
+      miniPlayer.close(threadRef);
+    }
+  } else if (source.kind === "browser") {
+    miniPlayer.open(threadRef, source);
+  } else {
+    floatDeviceSurface(threadRef, source, options.deviceState);
   }
 }
 

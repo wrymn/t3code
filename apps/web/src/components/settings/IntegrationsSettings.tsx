@@ -1102,7 +1102,7 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
   );
 }
 
-function BrowserFloatPreviewOnPanelCloseSetting({ disabled }: { readonly disabled: boolean }) {
+function BrowserFloatPreviewOnPanelCloseSetting() {
   const floatOnClose = useClientSettings((settings) => settings.browserFloatPreviewOnPanelClose);
   const updateSettings = useUpdatePrimarySettings();
 
@@ -1111,7 +1111,7 @@ function BrowserFloatPreviewOnPanelCloseSetting({ disabled }: { readonly disable
       {...searchableSetting("browser-float-preview-on-panel-close")}
       description="Keep a browser or device on screen as a floating preview when you close the right panel."
       resetAction={
-        !disabled && floatOnClose !== DEFAULT_BROWSER_FLOAT_PREVIEW_ON_PANEL_CLOSE ? (
+        floatOnClose !== DEFAULT_BROWSER_FLOAT_PREVIEW_ON_PANEL_CLOSE ? (
           <SettingResetButton
             label="float preview on panel close"
             onClick={() =>
@@ -1124,7 +1124,6 @@ function BrowserFloatPreviewOnPanelCloseSetting({ disabled }: { readonly disable
       }
       control={
         <Switch
-          disabled={disabled}
           checked={floatOnClose}
           onCheckedChange={(checked) =>
             updateSettings({ browserFloatPreviewOnPanelClose: Boolean(checked) })
@@ -1619,8 +1618,9 @@ export function BrowserSettingsPanel() {
           <BrowserProfilesSetting disabled={desktopOnly} />
           <BrowserLinkTargetSetting disabled={desktopOnly} />
           <BrowserAutoShowFloatingPreviewSetting disabled={desktopOnly} />
-          <BrowserFloatPreviewOnPanelCloseSetting disabled={desktopOnly} />
         </SettingsUnavailableGroup>
+        {/* Not desktop-only: web clients float server-run browsers and devices too. */}
+        <BrowserFloatPreviewOnPanelCloseSetting />
         {/* Not desktop-only: web clients search from server-run browser tabs too. */}
         <BrowserSearchEngineSetting />
         <AdvancedSettings

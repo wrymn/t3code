@@ -20,11 +20,11 @@ import {
 import { useRightPanelStore } from "../../rightPanelStore";
 import {
   applyDeviceSnapshot,
-  closeFloatBehindPanel,
   floatDeviceSurface,
   followPreviewSessions,
   resetDeviceSessionBaselinesForTests,
   revealServerTabs,
+  settlePanelPreviewOnClose,
   startAgentOpenedPreviews,
 } from "./agentOpenedPreviews";
 
@@ -196,15 +196,50 @@ describe("floatDeviceSurface", () => {
   });
 });
 
-describe("closeFloatBehindPanel", () => {
-  it("closes only a float showing the panel's own tab", () => {
-    setup();
-    usePreviewMiniPlayerStore.getState().open(ref, browserMiniPlayerSource("tab_other"));
-    closeFloatBehindPanel(ref, browserMiniPlayerSource("tab_panel"));
-    expect(miniPlayerSource()).toEqual(browserMiniPlayerSource("tab_other"));
+describe("settlePanelPreviewOnClose", () => {
+  const browser = browserMiniPlayerSource("tab_panel");
+  const pixel = {
+    kind: "device",
+    hostId: "local",
+    deviceId: "pixel",
+    platform: "android",
+    name: "Pixel 8",
+  } as const;
+  const otherBrowser = browserMiniPlayerSource("tab_other");
 
-    closeFloatBehindPanel(ref, browserMiniPlayerSource("tab_other"));
-    expect(miniPlayerSource()).toBeUndefined();
+  it.each([
+    { name: "floats a browser", source: browser, on: true, before: null, after: browser },
+    { name: "floats a device", source: pixel, on: true, before: null, after: pixel },
+    { name: "leaves nothing floating", source: browser, on: false, before: null, after: undefined },
+    {
+      name: "closes a browser hidden behind the panel",
+      source: browser,
+      on: false,
+      before: browser,
+      after: undefined,
+    },
+    {
+      name: "closes a device hidden behind the panel",
+      source: pixel,
+      on: false,
+      before: pixel,
+      after: undefined,
+    },
+    {
+      name: "keeps a float of another tab",
+      source: browser,
+      on: false,
+      before: otherBrowser,
+      after: otherBrowser,
+    },
+  ])("$name", ({ source, on, before, after }) => {
+    setup();
+    if (before) usePreviewMiniPlayerStore.getState().open(ref, before);
+    settlePanelPreviewOnClose(ref, source, {
+      floatOnClose: on,
+      deviceState: deviceState({ sessions: [session] }),
+    });
+    expect(miniPlayerSource()).toEqual(after);
   });
 });
 
@@ -251,6 +286,17 @@ describe("revealServerTabs", () => {
     expect(floatingTabId()).toBeNull();
     // A user action moves keyboard focus into the panel; an agent reveal must not.
     expect(useRightPanelStore.getState().getUserActionRevision(ref)).toBe(userActionRevision);
+  });
+
+  it("floats a revealed tab whose panel is closed", () => {
+    setup();
+    useRightPanelStore.getState().openBrowser(ref, "tab_a");
+    useRightPanelStore.getState().close(ref);
+
+    revealServerTabs(ref, [tab("tab_a", false)], { autoShowFloatingPreview: false });
+    expect(floatingTabId()).toBeNull();
+    revealServerTabs(ref, [tab("tab_a", false)], { autoShowFloatingPreview: true });
+    expect(floatingTabId()).toBe("tab_a");
   });
 });
 
