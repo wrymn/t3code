@@ -73,6 +73,7 @@ import {
 import {
   canEditPullRequestChangeRequest,
   canEditPullRequestComment,
+  canResolvePullRequestThread,
 } from "@t3tools/client-runtime/pull-request-editing";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestCommentBody } from "./PullRequestCommentBody";
@@ -489,6 +490,25 @@ export function PullRequestSummaryTab({
   const updateComment = useAtomCommand(pullRequestEnvironment.updateComment, {
     reportFailure: false,
   });
+  const setThreadResolution = useAtomCommand(pullRequestEnvironment.setThreadResolution, {
+    reportFailure: false,
+  });
+  const [resolvingThreadId, setResolvingThreadId] = useState<string | null>(null);
+  const toggleThreadResolved = async (thread: PullRequestReviewThread) => {
+    if (resolvingThreadId !== null) return;
+    setResolvingThreadId(thread.id);
+    const result = await setThreadResolution({
+      environmentId,
+      input: { ...reference, threadId: thread.id, resolved: !thread.isResolved },
+    });
+    setResolvingThreadId(null);
+    if (result._tag === "Failure") {
+      toastManager.add({ type: "error", title: "The conversation could not be updated" });
+      return;
+    }
+    onRefresh();
+  };
+  const canResolveThreads = detail.capabilities.review.resolve && detail.viewerPermissions.resolve;
   const [bodyScope, setBodyScope] = useState<string | null>(null);
   const [bodySaving, setBodySaving] = useState(false);
   // Hosts can reuse comment ids across pull requests.
@@ -597,6 +617,17 @@ export function PullRequestSummaryTab({
                     : fixFindingLabel}
                 </span>
               </span>
+            </Button>
+          ) : null}
+          {thread && !reply && canResolveThreads && canResolvePullRequestThread(detail, thread) ? (
+            <Button
+              size="xs"
+              variant="ghost"
+              className="shrink-0"
+              disabled={resolvingThreadId !== null}
+              onClick={() => void toggleThreadResolved(thread)}
+            >
+              {thread.isResolved ? "Unresolve" : "Resolve"}
             </Button>
           ) : null}
           {reactionBarFor(comment)}
