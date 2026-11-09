@@ -924,48 +924,10 @@ function RightPanelTab(
   const sideChatState = sideChatTabState(sideChatShell);
   const content = (
     <>
-      <PanelTabCloseButton label={`Close ${title}`} onClick={() => onClose(surface)}>
-        <SurfaceIcon
-          surface={surface}
-          previewUrl={props.previewUrl}
-          previewCapturedUrl={props.previewCapturedUrl}
-          theme={props.theme}
-          environmentId={props.environmentId}
-          pullRequestStatusSeed={props.pullRequestStatusSeed}
-        />
-        {props.pending ? (
-          <span
-            className="absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full bg-current"
-            aria-hidden
-          />
-        ) : null}
-      </PanelTabCloseButton>
-      {audio === "none" || !audioRuntimeTabId ? null : (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                className="cursor-pointer flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted"
-                aria-label={audio === "muted" ? `Unmute ${title}` : `Mute ${title}`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void previewBridge
-                    ?.setAudioMuted(audioRuntimeTabId, audio !== "muted")
-                    .catch(() => undefined);
-                }}
-              >
-                <MorphIcon className="size-3" icon={audio === "muted" ? VolumeOff : Volume2} />
-              </button>
-            }
-          />
-          <TooltipPopup>{audio === "muted" ? "Unmute tab" : "Mute tab"}</TooltipPopup>
-        </Tooltip>
-      )}
       {props.renaming ? (
         <input
           aria-label="Device tab name"
-          className="w-24 min-w-0 rounded-sm bg-background px-1 outline-none ring-1 ring-inset ring-ring"
+          className="ml-1 w-24 min-w-0 rounded-sm bg-background px-1 outline-none ring-1 ring-inset ring-ring"
           defaultValue={title}
           ref={(element) => {
             element?.focus();
@@ -990,10 +952,26 @@ function RightPanelTab(
                 onDoubleClick={() => {
                   if (surface.kind === "device" && props.canRename) onStartRename(surface.id);
                 }}
-                className="cursor-pointer flex min-w-0 items-center"
+                className="cursor-pointer flex h-full min-w-0 flex-1 items-center gap-1 pr-1 pl-1.5 text-left"
                 aria-label={sideChatState === null ? undefined : `${title}, ${sideChatState}`}
                 onClick={() => onActivate(surface)}
               >
+                <span className="relative flex size-4 shrink-0 items-center justify-center">
+                  <SurfaceIcon
+                    surface={surface}
+                    previewUrl={props.previewUrl}
+                    previewCapturedUrl={props.previewCapturedUrl}
+                    theme={props.theme}
+                    environmentId={props.environmentId}
+                    pullRequestStatusSeed={props.pullRequestStatusSeed}
+                  />
+                  {props.pending ? (
+                    <span
+                      className="absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full bg-current"
+                      aria-hidden
+                    />
+                  ) : null}
+                </span>
                 <span className="truncate">{title}</span>
               </button>
             }
@@ -1011,6 +989,29 @@ function RightPanelTab(
           </TooltipPopup>
         </Tooltip>
       )}
+      {audio === "none" || !audioRuntimeTabId ? null : (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                className="cursor-pointer flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted"
+                aria-label={audio === "muted" ? `Unmute ${title}` : `Mute ${title}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void previewBridge
+                    ?.setAudioMuted(audioRuntimeTabId, audio !== "muted")
+                    .catch(() => undefined);
+                }}
+              >
+                <MorphIcon className="size-3" icon={audio === "muted" ? VolumeOff : Volume2} />
+              </button>
+            }
+          />
+          <TooltipPopup>{audio === "muted" ? "Unmute tab" : "Mute tab"}</TooltipPopup>
+        </Tooltip>
+      )}
+      <PanelTabCloseButton label={`Close ${title}`} onClick={() => onClose(surface)} />
     </>
   );
   return (
@@ -1024,7 +1025,7 @@ function RightPanelTab(
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform), transition }}
       className={cn(
-        "cursor-pointer group/tab flex h-6 max-w-36 shrink-0 items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
+        "cursor-pointer group/tab flex h-6 w-45 shrink-0 items-center rounded-md pr-1 text-xs",
         props.ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
         props.active
           ? "bg-accent text-foreground"

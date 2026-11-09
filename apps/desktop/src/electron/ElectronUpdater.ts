@@ -6,6 +6,8 @@ import * as Scope from "effect/Scope";
 
 import { autoUpdater } from "electron-updater";
 
+import * as ForkUpdater from "./ForkUpdater.ts";
+
 type AutoUpdater = typeof autoUpdater;
 
 export type ElectronUpdaterFeedUrl = Parameters<AutoUpdater["setFeedURL"]>[0];
@@ -22,6 +24,8 @@ export class ElectronUpdaterCheckForUpdatesError extends Schema.TaggedError<Elec
   }
 }
 
+const isForkUpdateFailure = Schema.is(ForkUpdater.ForkUpdateFailure);
+
 export class ElectronUpdaterDownloadUpdateError extends Schema.TaggedError<ElectronUpdaterDownloadUpdateError>()(
   "ElectronUpdaterDownloadUpdateError",
   {
@@ -30,6 +34,7 @@ export class ElectronUpdaterDownloadUpdateError extends Schema.TaggedError<Elect
   },
 ) {
   override get message(): string {
+    if (isForkUpdateFailure(this.cause)) return this.cause.message;
     return `Electron updater failed to download the update on channel ${this.channel ?? "default"}.`;
   }
 }
@@ -183,4 +188,41 @@ export const make = ElectronUpdater.of({
   }),
 });
 
-export const layer = Layer.succeed(ElectronUpdater, make);
+const makeFork = (fork: ForkUpdater.ForkUpdater) =>
+  ElectronUpdater.of({
+    ...make,
+    checkForUpdates: Effect.suspend(() => {
+      const channel = autoUpdater.channel;
+      return Effect.tryPromise({
+        try: fork.checkForUpdates,
+        catch: (cause) => new ElectronUpdaterCheckForUpdatesError({ channel, cause }),
+      });
+    }),
+    downloadUpdate: Effect.suspend(() => {
+      const channel = autoUpdater.channel;
+      return Effect.tryPromise({
+        try: fork.downloadUpdate,
+        catch: (cause) => new ElectronUpdaterDownloadUpdateError({ channel, cause }),
+      });
+    }),
+    quitAndInstall: Effect.fn("ElectronUpdater.quitAndInstall")(function ({
+      isSilent,
+      isForceRunAfter,
+    }) {
+      return Effect.try({
+        try: fork.quitAndInstall,
+        catch: (cause) =>
+          new ElectronUpdaterQuitAndInstallError({
+            channel: autoUpdater.channel,
+            isSilent,
+            isForceRunAfter,
+            cause,
+          }),
+      });
+    }),
+  });
+
+export const layer = Layer.sync(ElectronUpdater, () => {
+  const fork = ForkUpdater.fromPackagedApp();
+  return fork === undefined ? make : makeFork(fork);
+});

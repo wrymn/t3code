@@ -1567,12 +1567,16 @@ export const make = Effect.gen(function* () {
     const batches = (yield* Effect.all(reads, { concurrency: REPOSITORY_CONCURRENCY })).flat();
 
     const nextCursors: Record<string, string> = {};
+    const uniqueEntries = new Map<string, PullRequestListEntry>();
     for (const batch of batches) {
       if (batch.nextCursor !== null) nextCursors[batch.key] = batch.nextCursor;
+      for (const entry of batch.entries) {
+        if (!uniqueEntries.has(entry.url)) uniqueEntries.set(entry.url, entry);
+      }
     }
-    const entries = batches
-      .flatMap((batch) => batch.entries)
-      .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    const entries = [...uniqueEntries.values()].toSorted((left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt),
+    );
     // Hover cards on listed rows read from here. A pinned account or a mid-read refresh is another
     // scope; half the cache stays free for previews read directly.
     if ((yield* routingCredential) === null && epochCounter === epochAtStart) {

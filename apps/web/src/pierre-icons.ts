@@ -43,6 +43,10 @@ const T3_FILE_ICON_SPRITE = `
   <symbol id="t3-tree-icon-loading" viewBox="0 0 24 24">
     <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M21 12a9 9 0 1 1-6.219-8.56" />
   </symbol>
+  <!-- Lucide Message Square icon, ISC license. -->
+  <symbol id="t3-tree-icon-comment" viewBox="0 0 24 24">
+    <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z" />
+  </symbol>
   <!-- Lucide Diff icon, ISC license. -->
   <symbol id="t3-file-icon-diff" viewBox="0 0 24 24">
     <path fill="none" style="stroke: light-dark(#199f43, #5ecc71)" stroke-width="2" stroke-linecap="round" d="M12 3v14M5 10h14M5 21h14" />

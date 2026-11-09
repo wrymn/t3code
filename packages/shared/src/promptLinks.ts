@@ -191,6 +191,16 @@ export function promptLinkAppPath(
   if (!URL.canParse(value)) return null;
   const url = new URL(value);
   if (APP_SCHEME.test(url.protocol)) {
+    if (url.host === "review" && (url.pathname === "" || url.pathname === "/")) {
+      const pullRequest = parsePromptLinkPullRequest(url.searchParams.get("pr") ?? "");
+      if (pullRequest === null) return null;
+      const search = new URLSearchParams({
+        repository: `${pullRequest.owner}/${pullRequest.name}`,
+        number: String(pullRequest.number),
+        selectedHost: "github.com",
+      });
+      return `/pull-requests?${search}`;
+    }
     if (url.host === "new" && (url.pathname === "" || url.pathname === "/")) {
       return `/new${url.search}`;
     }
