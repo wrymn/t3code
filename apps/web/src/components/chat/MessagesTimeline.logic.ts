@@ -593,6 +593,8 @@ type MessagesTimelineRowContent =
       showAssistantMeta: boolean;
       /** The latest finished reply of a still-running response shows only its timestamp. */
       showAssistantTimestamp: boolean;
+      /** Identifies the run boundary for actions and trailing work metadata. */
+      isTerminalAssistantMessage?: boolean;
       showAssistantCopyButton: boolean;
       assistantCopyStreaming: boolean;
       assistantTurnDiffSummary?: TurnDiffSummary | undefined;
@@ -1244,6 +1246,7 @@ function attachTrailingToolGroupsToAssistant(
       row.kind !== "message" ||
       row.message.role !== "assistant" ||
       !row.showAssistantMeta ||
+      !row.isTerminalAssistantMessage ||
       runId === null
     ) {
       continue;
@@ -2060,6 +2063,7 @@ export function deriveMessagesTimelineRows(input: {
         assistantResponseStillInProgress &&
         !timelineEntry.message.streaming,
       showAssistantCopyButton: showAssistantMeta,
+      isTerminalAssistantMessage,
       assistantCopyStreaming: timelineEntry.message.streaming || assistantResponseStillInProgress,
       assistantTurnDiffSummary:
         timelineEntry.message.role === "assistant"
@@ -2234,7 +2238,12 @@ function attachCreatedThreadSummaries(
       )
         return [];
     }
-    if (row.kind === "message" && row.showAssistantMeta && row.message.runId) {
+    if (
+      row.kind === "message" &&
+      row.showAssistantMeta &&
+      row.message.runId &&
+      terminalIndexes.get(row.message.runId) === index
+    ) {
       return [
         row,
         ...(createdByRun.get(row.message.runId) ?? []).map((entry) => ({
@@ -2522,6 +2531,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.message === bm.message &&
         a.projectedItem === bm.projectedItem &&
         a.showAssistantMeta === bm.showAssistantMeta &&
+        a.isTerminalAssistantMessage === bm.isTerminalAssistantMessage &&
         a.showAssistantTimestamp === bm.showAssistantTimestamp &&
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&

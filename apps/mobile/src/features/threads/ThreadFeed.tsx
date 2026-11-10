@@ -2290,7 +2290,7 @@ function renderFeedEntry(
               buttonSize={props.replyActionSize.button}
               iconSize={props.replyActionSize.icon}
             />
-            {message.projectedItem ? (
+            {message.projectedItem && props.terminalAssistantMessageIds.has(message.id) ? (
               <AssistantForkButton
                 environmentId={props.environmentId}
                 iconColor={iconSubtleColor}

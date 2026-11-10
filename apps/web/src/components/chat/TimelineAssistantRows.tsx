@@ -73,6 +73,7 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
             className="mt-1.5"
             projectedItem={row.projectedItem}
             message={row.message}
+            showForkButton={row.isTerminalAssistantMessage === true}
             showCopyButton={row.showAssistantCopyButton}
             copyStreaming={row.assistantCopyStreaming}
           />
@@ -147,6 +148,7 @@ export function AssistantMetaTimelineRow({
         className="mt-0.5"
         projectedItem={row.projectedItem}
         message={row.message}
+        showForkButton
         showCopyButton={row.showAssistantCopyButton}
         copyStreaming={row.assistantCopyStreaming}
         alwaysVisible
@@ -160,6 +162,7 @@ function AssistantMessageMeta({
   projectedItem,
   message,
   showCopyButton,
+  showForkButton = false,
   copyStreaming,
   alwaysVisible = false,
 }: {
@@ -167,6 +170,7 @@ function AssistantMessageMeta({
   projectedItem?: Extract<TimelineRow, { kind: "message" }>["projectedItem"];
   message: ChatMessage;
   showCopyButton: boolean;
+  showForkButton?: boolean;
   copyStreaming: boolean;
   alwaysVisible?: boolean;
 }) {
@@ -192,7 +196,7 @@ function AssistantMessageMeta({
         showCopyButton={showCopyButton}
         streaming={copyStreaming}
       />
-      {projectedItem?.item.type === "assistant_message" ? (
+      {showForkButton && projectedItem?.item.type === "assistant_message" ? (
         <AssistantForkButton projectedItem={projectedItem} />
       ) : null}
       {!message.streaming && (

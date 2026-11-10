@@ -994,8 +994,12 @@ describe("deriveMessagesTimelineRows", () => {
       if (responseComplete) {
         expect(collapsedRows.find((row) => row.id === "assistant-first-entry")).toMatchObject({
           showAssistantCopyButton: true,
+          isTerminalAssistantMessage: false,
         });
       }
+      expect(collapsedRows.find((row) => row.id === "assistant-final-entry")).toMatchObject({
+        isTerminalAssistantMessage: true,
+      });
       const expandedRows = deriveMessagesTimelineRows({
         timelineEntries,
         expandedRunIds: new Set(["turn-1" as never]),
@@ -1010,7 +1014,6 @@ describe("deriveMessagesTimelineRows", () => {
         "turn-fold:turn-1",
         "assistant-first-entry",
         "work-entry-1",
-        ...(responseComplete ? ["assistant-meta:assistant-first"] : []),
         "assistant-final-entry",
       ]);
       expect(
@@ -3664,62 +3667,71 @@ describe("linked timeline resources", () => {
     },
   );
 
-  it("keeps created-chat summaries after the final answer and folds only their timeline rows", () => {
-    const timelineEntries = [
-      {
-        kind: "message" as const,
-        id: "intro",
-        createdAt: "2026-09-08T10:00:00Z",
-        message: {
-          id: MessageId.make("intro"),
-          role: "assistant" as const,
-          text: "Creating the chat",
-          runId,
-          streaming: false,
+  it.each([false, true])(
+    "keeps created-chat summaries at the final answer: %s",
+    (responseComplete) => {
+      const timelineEntries = [
+        {
+          kind: "message" as const,
+          id: "intro",
           createdAt: "2026-09-08T10:00:00Z",
-          updatedAt: "2026-09-08T10:00:00Z",
+          message: {
+            id: MessageId.make("intro"),
+            role: "assistant" as const,
+            text: "Creating the chat",
+            runId,
+            streaming: false,
+            createdAt: "2026-09-08T10:00:00Z",
+            updatedAt: "2026-09-08T10:00:00Z",
+          },
         },
-      },
-      event("created", "thread_created"),
-      {
-        kind: "message" as const,
-        id: "final",
-        createdAt: "2026-09-08T10:00:04Z",
-        message: {
-          id: MessageId.make("final"),
-          role: "assistant" as const,
-          text: "Chat is ready",
-          runId,
-          streaming: false,
+        event("created", "thread_created"),
+        {
+          kind: "message" as const,
+          id: "final",
           createdAt: "2026-09-08T10:00:04Z",
-          updatedAt: "2026-09-08T10:00:04Z",
+          message: {
+            id: MessageId.make("final"),
+            role: "assistant" as const,
+            text: "Chat is ready",
+            runId,
+            streaming: false,
+            createdAt: "2026-09-08T10:00:04Z",
+            updatedAt: "2026-09-08T10:00:04Z",
+          },
         },
-      },
-    ];
-    const collapsed = deriveMessagesTimelineRows({ ...common, timelineEntries });
-    expect(collapsed.map((row) => row.id)).toEqual([
-      "turn-fold:resource-run",
-      "final",
-      "summary:created",
-      "assistant-meta:final",
-    ]);
-    expect(collapsed.find((row) => row.id === "summary:created")).toMatchObject({
-      resourceSummary: true,
-    });
-    const expanded = deriveMessagesTimelineRows({
-      ...common,
-      timelineEntries,
-      expandedRunIds: new Set([runId]),
-    });
-    expect(expanded.map((row) => row.id)).toEqual([
-      "turn-fold:resource-run",
-      "intro",
-      "created",
-      "final",
-      "summary:created",
-      "assistant-meta:final",
-    ]);
-  });
+      ];
+      if (responseComplete) {
+        Object.assign(timelineEntries[0]!, {
+          projectedItem: { item: { type: "assistant_message", responseComplete: true } },
+        });
+      }
+      const collapsed = deriveMessagesTimelineRows({ ...common, timelineEntries });
+      expect(collapsed.map((row) => row.id)).toEqual([
+        ...(responseComplete ? ["intro", "created"] : ["turn-fold:resource-run"]),
+        "final",
+        "summary:created",
+        "assistant-meta:final",
+      ]);
+      expect(collapsed.filter((row) => row.id === "summary:created")).toHaveLength(1);
+      expect(collapsed.find((row) => row.id === "summary:created")).toMatchObject({
+        resourceSummary: true,
+      });
+      const expanded = deriveMessagesTimelineRows({
+        ...common,
+        timelineEntries,
+        expandedRunIds: new Set([runId]),
+      });
+      expect(expanded.map((row) => row.id)).toEqual([
+        ...(responseComplete ? [] : ["turn-fold:resource-run"]),
+        "intro",
+        "created",
+        "final",
+        "summary:created",
+        "assistant-meta:final",
+      ]);
+    },
+  );
 
   it("shows a created chat after a steer only when that steer's segment is open", () => {
     const message = (id: string, role: "user" | "assistant", second: number) => ({
