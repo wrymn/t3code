@@ -4033,6 +4033,13 @@ interface ActiveClaudeTurnContext {
     fallbackText: string;
     fallbackNativeItemId: string;
     emittedNativeItemIds: Set<string>;
+    responses: Map<
+      string,
+      {
+        complete: boolean;
+        items: Map<string, Extract<OrchestrationV2TurnItem, { type: "assistant_message" }>>;
+      }
+    >;
     // The CLI repeats a notice that ends a prompt as the turn's result text.
     noticeTexts: Set<string>;
   };
@@ -7743,10 +7750,35 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
         });
 
+        const completeAssistantResponse = Effect.fn("ClaudeAdapterV2.completeAssistantResponse")(
+          function* (context: ActiveClaudeTurnContext, messageId: string) {
+            const response = context.assistant.responses.get(messageId) ?? {
+              complete: false,
+              items: new Map<
+                string,
+                Extract<OrchestrationV2TurnItem, { type: "assistant_message" }>
+              >(),
+            };
+            if (response.complete) return;
+            response.complete = true;
+            context.assistant.responses.set(messageId, response);
+            for (const [id, item] of response.items) {
+              const completed = { ...item, responseComplete: true as const };
+              response.items.set(id, completed);
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CLAUDE_PROVIDER,
+                turnItem: completed,
+              });
+            }
+          },
+        );
+
         const emitAssistantTextArtifacts = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly nativeItemId: string;
           readonly text: string;
+          readonly nativeMessageId?: string;
         }) {
           if (input.context.assistant.emittedNativeItemIds.has(input.nativeItemId)) {
             return;
@@ -7764,6 +7796,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             startedAt: now,
             completedAt: now,
           });
+          let turnItem = artifacts.turnItem;
+          if (input.nativeMessageId !== undefined && turnItem.type === "assistant_message") {
+            const response = input.context.assistant.responses.get(input.nativeMessageId) ?? {
+              complete: false,
+              items: new Map<
+                string,
+                Extract<OrchestrationV2TurnItem, { type: "assistant_message" }>
+              >(),
+            };
+            turnItem = {
+              ...turnItem,
+              ...(response.complete ? { responseComplete: true as const } : {}),
+            };
+            response.items.set(input.nativeItemId, turnItem);
+            input.context.assistant.responses.set(input.nativeMessageId, response);
+          }
           yield* Effect.all(
             [
               emitProviderEvent({
@@ -7779,7 +7827,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               emitProviderEvent({
                 type: "turn_item.updated",
                 driver: CLAUDE_PROVIDER,
-                turnItem: artifacts.turnItem,
+                turnItem,
               }),
             ],
             { concurrency: 1 },
@@ -8456,6 +8504,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 usage === undefined ? null : { messageId: event.message.id, usage };
               if (usage !== undefined) yield* emitContextUsage(context, usage, true);
             } else if (event.type === "message_delta") {
+              if (event.delta.stop_reason === "end_turn" && reasoning.messageId !== null) {
+                yield* completeAssistantResponse(context, reasoning.messageId);
+              }
               const usage: typeof event.usage | undefined = event.usage;
               const stream = context.streamUsage;
               if (stream?.usage && usage !== undefined) {
@@ -9315,6 +9366,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               );
             }
           }
+          if (
+            message.type === "assistant" &&
+            !message.parent_tool_use_id &&
+            message.message.stop_reason === "end_turn"
+          ) {
+            yield* completeAssistantResponse(context, message.message.id);
+          }
           const assistantText = assistantTextFromSdkMessage(message);
           if (
             assistantText !== null &&
@@ -9368,6 +9426,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               context,
               nativeItemId: assistantText.nativeItemId,
               text: assistantText.text,
+              ...(message.type === "assistant" ? { nativeMessageId: message.message.id } : {}),
             });
             return;
           }
@@ -10599,6 +10658,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 fallbackText: "",
                 fallbackNativeItemId: `assistant:${turnInput.runId}`,
                 emittedNativeItemIds: new Set(),
+                responses: new Map(),
                 noticeTexts: new Set(),
               },
               reasoning: {

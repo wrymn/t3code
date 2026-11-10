@@ -21,6 +21,7 @@ const now = DateTime.makeUnsafe("2026-04-20T00:00:00.000Z");
 
 const decodeOrchestrationV2TurnItemJson = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
 const encodeOrchestrationV2TurnItemJson = Schema.encodeSync(OrchestrationV2TurnItemJson);
+const encodeTurnItemWire = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2TurnItem));
 const decodeOrchestrationV2Subagent = Schema.decodeUnknownSync(OrchestrationV2Subagent);
 const encodeOrchestrationV2SubagentJson = Schema.encodeSync(OrchestrationV2SubagentJson);
 const decodeOrchestrationV2ProviderThreadJson = Schema.decodeUnknownSync(
@@ -638,4 +639,38 @@ describe("latestProviderTurnForAttempt", () => {
     expect(latestProviderTurnForAttempt(turns, RunAttemptId.make("goal-attempt"))?.id).toBe("last");
     expect(latestProviderTurnForAttempt(turns, null)).toBeUndefined();
   });
+});
+
+describe("assistant response boundaries", () => {
+  it.each([false, true])(
+    "preserves optional completion evidence through storage and wire: %s",
+    (complete) => {
+      const stored = {
+        id: "answer",
+        threadId: "thread",
+        runId: "run",
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed",
+        title: null,
+        startedAt: null,
+        completedAt: null,
+        updatedAt: "2026-09-09T00:00:00.000Z",
+        type: "assistant_message",
+        messageId: "answer",
+        text: "Report",
+        streaming: false,
+        ...(complete ? { responseComplete: true } : {}),
+      };
+      const item = decodeOrchestrationV2TurnItemJson(stored);
+      for (const encoded of [encodeOrchestrationV2TurnItemJson(item), encodeTurnItemWire(item)]) {
+        expect(decodeOrchestrationV2TurnItemJson(encoded)).toEqual(item);
+        expect(encoded).toMatchObject(stored);
+      }
+    },
+  );
 });

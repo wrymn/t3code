@@ -904,105 +904,120 @@ describe("deriveMessagesTimelineRows", () => {
     expect(assistantRow?.assistantTurnDiffSummary).toBe(assistantTurnDiffSummary);
   });
 
-  it("folds the first assistant message and settled work before the terminal response", () => {
-    const timelineEntries = [
-      {
-        id: "user-entry",
-        kind: "message" as const,
-        createdAt: "2026-01-01T00:00:00Z",
-        message: {
-          id: "user-1" as never,
-          role: "user" as const,
-          text: "Build it",
-          runId: null,
+  it.each([false, true])(
+    "preserves completed responses across continuations: %s",
+    (responseComplete) => {
+      const timelineEntries = [
+        {
+          id: "user-entry",
+          kind: "message" as const,
           createdAt: "2026-01-01T00:00:00Z",
-          updatedAt: "2026-01-01T00:00:00Z",
-          streaming: false,
+          message: {
+            id: "user-1" as never,
+            role: "user" as const,
+            text: "Build it",
+            runId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
         },
-      },
-      {
-        id: "assistant-first-entry",
-        kind: "message" as const,
-        createdAt: "2026-01-01T00:00:05Z",
-        message: {
-          id: "assistant-first" as never,
-          role: "assistant" as const,
-          text: "Synthetic deployment checklist\n1. Confirm the deployment is ready.",
-          runId: "turn-1" as never,
+        {
+          id: "assistant-first-entry",
+          kind: "message" as const,
           createdAt: "2026-01-01T00:00:05Z",
-          updatedAt: "2026-01-01T00:00:06Z",
-          streaming: false,
+          message: {
+            id: "assistant-first" as never,
+            role: "assistant" as const,
+            text: "Synthetic deployment checklist\n1. Confirm the deployment is ready.",
+            runId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:05Z",
+            updatedAt: "2026-01-01T00:00:06Z",
+            streaming: false,
+          },
         },
-      },
-      {
-        id: "work-entry-1",
-        kind: "work" as const,
-        createdAt: "2026-01-01T00:00:08Z",
-        entry: {
-          id: "work-1",
+        {
+          id: "work-entry-1",
+          kind: "work" as const,
           createdAt: "2026-01-01T00:00:08Z",
-          runId: "turn-1" as never,
-          label: "Ran command",
-          tone: "tool" as const,
+          entry: {
+            id: "work-1",
+            createdAt: "2026-01-01T00:00:08Z",
+            runId: "turn-1" as never,
+            label: "Ran command",
+            tone: "tool" as const,
+          },
         },
-      },
-      {
-        id: "assistant-final-entry",
-        kind: "message" as const,
-        createdAt: "2026-01-01T00:00:20Z",
-        message: {
-          id: "assistant-final" as never,
-          role: "assistant" as const,
-          text: "Done",
-          runId: "turn-1" as never,
+        {
+          id: "assistant-final-entry",
+          kind: "message" as const,
           createdAt: "2026-01-01T00:00:20Z",
-          updatedAt: "2026-01-01T00:00:22Z",
-          streaming: false,
+          message: {
+            id: "assistant-final" as never,
+            role: "assistant" as const,
+            text: "Done",
+            runId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:20Z",
+            updatedAt: "2026-01-01T00:00:22Z",
+            streaming: false,
+          },
         },
-      },
-    ];
+      ];
 
-    const collapsedRows = deriveMessagesTimelineRows({
-      timelineEntries,
-      isWorking: false,
-      activeTurnStartedAt: null,
-      turnDiffSummaries: [],
-      supportsConversationRollback: false,
-    });
+      if (responseComplete) {
+        Object.assign(timelineEntries[1]!, {
+          projectedItem: { item: { type: "assistant_message", responseComplete: true } },
+        });
+      }
+      const collapsedRows = deriveMessagesTimelineRows({
+        timelineEntries,
+        isWorking: false,
+        activeTurnStartedAt: null,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
 
-    const foldRow = collapsedRows.find(
-      (row): row is Extract<(typeof collapsedRows)[number], { kind: "turn-fold" }> =>
-        row.kind === "turn-fold",
-    );
-    expect(foldRow?.runId).toBe("turn-1");
-    expect(foldRow?.expanded).toBe(false);
-    expect(foldRow?.label).toBe("Worked for 22s");
-    expect(collapsedRows.map((row) => row.id)).toEqual([
-      "user-entry",
-      "turn-fold:turn-1",
-      "assistant-final-entry",
-    ]);
+      const foldRow = collapsedRows.find(
+        (row): row is Extract<(typeof collapsedRows)[number], { kind: "turn-fold" }> =>
+          row.kind === "turn-fold",
+      );
+      expect(foldRow?.runId).toBe("turn-1");
+      expect(foldRow?.expanded).toBe(false);
+      expect(foldRow?.label).toBe("Worked for 22s");
+      expect(collapsedRows.map((row) => row.id)).toEqual([
+        "user-entry",
+        "turn-fold:turn-1",
+        ...(responseComplete ? ["assistant-first-entry"] : []),
+        "assistant-final-entry",
+      ]);
 
-    const expandedRows = deriveMessagesTimelineRows({
-      timelineEntries,
-      expandedRunIds: new Set(["turn-1" as never]),
-      isWorking: false,
-      activeTurnStartedAt: null,
-      turnDiffSummaries: [],
-      supportsConversationRollback: false,
-    });
+      if (responseComplete) {
+        expect(collapsedRows.find((row) => row.id === "assistant-first-entry")).toMatchObject({
+          showAssistantCopyButton: true,
+        });
+      }
+      const expandedRows = deriveMessagesTimelineRows({
+        timelineEntries,
+        expandedRunIds: new Set(["turn-1" as never]),
+        isWorking: false,
+        activeTurnStartedAt: null,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
 
-    expect(expandedRows.map((row) => row.id)).toEqual([
-      "user-entry",
-      "turn-fold:turn-1",
-      "assistant-first-entry",
-      "work-entry-1",
-      "assistant-final-entry",
-    ]);
-    expect(
-      expandedRows.find((row) => row.kind === "turn-fold" && row.expanded === true),
-    ).toBeDefined();
-  });
+      expect(expandedRows.map((row) => row.id)).toEqual([
+        "user-entry",
+        "turn-fold:turn-1",
+        "assistant-first-entry",
+        "work-entry-1",
+        ...(responseComplete ? ["assistant-meta:assistant-first"] : []),
+        "assistant-final-entry",
+      ]);
+      expect(
+        expandedRows.find((row) => row.kind === "turn-fold" && row.expanded === true),
+      ).toBeDefined();
+    },
+  );
 
   it.each([1, 2, 3])("folds %i completed activities after the terminal response", (count) => {
     const runId = RunId.make("turn-1");

@@ -1153,6 +1153,11 @@ function deriveThreadFeedRunFolds(
         .filter(
           (entry) =>
             entry.id !== terminalAssistantId &&
+            !(
+              entry.type === "message" &&
+              entry.message.projectedItem?.item.type === "assistant_message" &&
+              entry.message.projectedItem.item.responseComplete === true
+            ) &&
             entry.type !== "html-render" &&
             entry.type !== "mcp-app" &&
             !(entry.type === "activity-group" && isContextCompactionActivityGroup(entry)) &&

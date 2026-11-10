@@ -810,83 +810,88 @@ describe("buildThreadFeed", () => {
     );
   });
 
-  it("folds progress messages while keeping the final assistant answer visible", () => {
-    const opening = {
-      ...assistantMessage("2026-06-20T00:00:01.500Z"),
-      id: TurnItemId.make("item-opening"),
-      messageId: MessageId.make("message-opening"),
-      text: "I will check the deployment configuration.",
-    };
-    const middle = {
-      ...assistantMessage("2026-06-20T00:00:02.500Z"),
-      id: TurnItemId.make("item-middle"),
-      messageId: MessageId.make("message-middle"),
-      text: "The configuration is valid; checking the build next.",
-    };
-    const feed = buildThreadFeed([
-      projected(userMessage(), 0),
-      projected(opening, 1),
-      projected(command(), 2),
-      projected(middle, 3),
-      projected(assistantMessage(), 4),
-    ]);
-    const latestRun = {
-      runId,
-      status: "completed" as const,
-      startedAt: "2026-06-20T00:00:01.000Z",
-      completedAt: "2026-06-20T00:00:03.000Z",
-    };
+  it.each([false, true])(
+    "preserves completed responses across continuations: %s",
+    (responseComplete) => {
+      const opening = {
+        ...assistantMessage("2026-06-20T00:00:01.500Z"),
+        id: TurnItemId.make("item-opening"),
+        messageId: MessageId.make("message-opening"),
+        text: "I will check the deployment configuration.",
+      };
+      const middle = {
+        ...assistantMessage("2026-06-20T00:00:02.500Z"),
+        id: TurnItemId.make("item-middle"),
+        messageId: MessageId.make("message-middle"),
+        text: "The configuration is valid; checking the build next.",
+        ...(responseComplete ? { responseComplete: true as const } : {}),
+      };
+      const feed = buildThreadFeed([
+        projected(userMessage(), 0),
+        projected(opening, 1),
+        projected(command(), 2),
+        projected(middle, 3),
+        projected(assistantMessage(), 4),
+      ]);
+      const latestRun = {
+        runId,
+        status: "completed" as const,
+        startedAt: "2026-06-20T00:00:01.000Z",
+        completedAt: "2026-06-20T00:00:03.000Z",
+      };
 
-    const collapsed = deriveThreadFeedPresentation(feed, latestRun, new Set());
-    expect(collapsed.map((entry) => entry.id)).toEqual([
-      "message-user",
-      "run-fold:run-1",
-      "message-assistant",
-    ]);
-    expect(collapsed[1]).toMatchObject({
-      type: "run-fold",
-      createdAt: "2026-06-20T00:00:01.500Z",
-      label: "Worked for 2s",
-    });
+      const collapsed = deriveThreadFeedPresentation(feed, latestRun, new Set());
+      expect(collapsed.map((entry) => entry.id)).toEqual([
+        "message-user",
+        "run-fold:run-1",
+        ...(responseComplete ? ["message-middle"] : []),
+        "message-assistant",
+      ]);
+      expect(collapsed[1]).toMatchObject({
+        type: "run-fold",
+        createdAt: "2026-06-20T00:00:01.500Z",
+        label: "Worked for 2s",
+      });
 
-    const expanded = deriveThreadFeedPresentation(feed, latestRun, new Set([runId]));
-    expect(expanded.map((entry) => entry.type)).toEqual([
-      "message",
-      "run-fold",
-      "message",
-      "activity-group",
-      "message",
-      "message",
-    ]);
-    const anchor = {
-      ...command(),
-      deferredWork: { cursor: "old-work", itemCount: 100, lastOrdinal: 100 },
-    };
-    const deferredFeed = buildThreadFeed([projected(userMessage(), 0), projected(anchor, 1)]);
-    const running = { ...latestRun, status: "running" as const, completedAt: null };
-    const deferredRows = deriveThreadFeedPresentation(deferredFeed, running, new Set());
-    const disclosure = deferredRows.find((entry) => entry.type === "run-fold");
-    expect(disclosure).toMatchObject({ deferredWorkItemIds: [anchor.id], expanded: false });
-    if (disclosure?.type !== "run-fold") throw new Error("Expected deferred work disclosure");
-    expect(
-      deriveThreadFeedPresentation(deferredFeed, running, new Set([disclosure.runId])).some(
-        (entry) => entry.type === "activity-group",
-      ),
-    ).toBe(true);
-    expect(expanded[4]).toMatchObject({ message: { id: middle.messageId, text: middle.text } });
+      const expanded = deriveThreadFeedPresentation(feed, latestRun, new Set([runId]));
+      expect(expanded.map((entry) => entry.type)).toEqual([
+        "message",
+        "run-fold",
+        "message",
+        "activity-group",
+        "message",
+        "message",
+      ]);
+      const anchor = {
+        ...command(),
+        deferredWork: { cursor: "old-work", itemCount: 100, lastOrdinal: 100 },
+      };
+      const deferredFeed = buildThreadFeed([projected(userMessage(), 0), projected(anchor, 1)]);
+      const running = { ...latestRun, status: "running" as const, completedAt: null };
+      const deferredRows = deriveThreadFeedPresentation(deferredFeed, running, new Set());
+      const disclosure = deferredRows.find((entry) => entry.type === "run-fold");
+      expect(disclosure).toMatchObject({ deferredWorkItemIds: [anchor.id], expanded: false });
+      if (disclosure?.type !== "run-fold") throw new Error("Expected deferred work disclosure");
+      expect(
+        deriveThreadFeedPresentation(deferredFeed, running, new Set([disclosure.runId])).some(
+          (entry) => entry.type === "activity-group",
+        ),
+      ).toBe(true);
+      expect(expanded[4]).toMatchObject({ message: { id: middle.messageId, text: middle.text } });
 
-    const active = deriveThreadFeedPresentation(
-      feed,
-      { ...latestRun, status: "running", completedAt: null },
-      new Set(),
-    );
-    expect(active.filter((entry) => entry.type === "message").map((entry) => entry.id)).toEqual([
-      "message-user",
-      "message-opening",
-      "message-middle",
-      "message-assistant",
-    ]);
-  });
+      const active = deriveThreadFeedPresentation(
+        feed,
+        { ...latestRun, status: "running", completedAt: null },
+        new Set(),
+      );
+      expect(active.filter((entry) => entry.type === "message").map((entry) => entry.id)).toEqual([
+        "message-user",
+        "message-opening",
+        "message-middle",
+        "message-assistant",
+      ]);
+    },
+  );
 
   // regression: #21393 show plans and fold settled progress notes
   it("folds progress even when a response has no tool calls", () => {

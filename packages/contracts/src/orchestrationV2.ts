@@ -1616,6 +1616,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("assistant_message"),
+    /** Provider-confirmed response end, distinct from completion of an individual text block. */
+    responseComplete: Schema.optional(Schema.Literal(true)),
     messageId: MessageId,
     text: Schema.String,
     textOmitted: DedupedBodyMarker,
@@ -2450,6 +2452,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("assistant_message"),
+    /** Provider-confirmed response end, distinct from completion of an individual text block. */
+    responseComplete: Schema.optional(Schema.Literal(true)),
     messageId: MessageId,
     text: Schema.String,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),

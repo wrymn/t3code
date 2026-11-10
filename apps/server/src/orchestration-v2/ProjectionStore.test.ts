@@ -6382,6 +6382,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             completedAt: now,
             updatedAt: now,
             type: "assistant_message",
+            responseComplete: true,
             messageId: MessageId.make(
               `message:projection-fork-source-rollback:assistant:${ordinal}`,
             ),
@@ -6395,6 +6396,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.deepEqual(
         targetBeforeRollback.visibleTurnItems.map((row) => row.item.type),
         ["user_message", "assistant_message", "user_message", "assistant_message", "fork"],
+      );
+
+      assert.deepEqual(
+        targetBeforeRollback.visibleTurnItems.flatMap(({ item }) =>
+          item.type === "assistant_message" ? [item.responseComplete] : [],
+        ),
+        [true, true],
       );
 
       yield* projectionStore.apply({

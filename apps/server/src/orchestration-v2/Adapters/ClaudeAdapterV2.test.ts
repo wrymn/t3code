@@ -6796,6 +6796,115 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const terminal = yield* Queue.take(harness.terminalReceipts);
       assert.equal(terminal.status, "completed");
       assert.deepEqual(reportedContextTokens(harness.events), [38_123]);
+      const items = new Map(
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+            ? [[event.turnItem.id, event.turnItem] as const]
+            : [],
+        ),
+      );
+      assert.deepEqual(
+        [...items.values()].map((item) => Reflect.get(item, "responseComplete")),
+        [undefined, undefined, true],
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("preserves response boundaries across same-turn continuations and late snapshots", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("response-boundaries"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      const snapshot = (id: string, uuid: string, text: string, reason: string | null = null) =>
+        claudeSdkFrame({
+          type: "assistant",
+          uuid,
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          message: {
+            id,
+            type: "message",
+            role: "assistant",
+            model: "claude-sonnet-4-6",
+            content: text ? [{ type: "text", text }] : [],
+            stop_reason: reason,
+            stop_sequence: null,
+            usage: zeroUsage,
+          },
+        });
+      const start = (id: string) =>
+        usageStreamFrame({ type: "message_start", message: { id, usage: zeroUsage } });
+      const end = (reason: string) =>
+        usageStreamFrame({
+          type: "message_delta",
+          delta: { stop_reason: reason, stop_sequence: null },
+          usage: zeroUsage,
+        });
+      const frames = [
+        start("commentary"),
+        snapshot("commentary", "commentary", "Checking."),
+        end("tool_use"),
+        start("report"),
+        snapshot("report", "report-a", "Detailed report."),
+        snapshot("report", "report-b", "Validation results."),
+        end("end_turn"),
+        end("end_turn"),
+        snapshot("report", "report-a", "Detailed report.", "end_turn"),
+        start("followup"),
+        snapshot("followup", "followup", "Hook follow-up."),
+        snapshot("followup", "empty", "", "end_turn"),
+        start("truncated"),
+        snapshot("truncated", "truncated", "Partial"),
+        end("max_tokens"),
+        start("unknown"),
+        snapshot("unknown", "unknown", "Unclassified"),
+        start("early"),
+        end("end_turn"),
+        snapshot("early", "early", "Final follow-up."),
+        makeResultFrame({ uuid: "boundary-result", result: "Final follow-up." }),
+      ];
+      for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+      const updates = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+          ? [event.turnItem]
+          : [],
+      );
+      const latest = [...new Map(updates.map((item) => [item.id, item])).values()];
+      assert.deepEqual(
+        latest.map((item) => [item.text, item.responseComplete]),
+        [
+          ["Checking.", undefined],
+          ["Detailed report.", true],
+          ["Validation results.", true],
+          ["Hook follow-up.", true],
+          ["Partial", undefined],
+          ["Unclassified", undefined],
+          ["Final follow-up.", true],
+        ],
+      );
+      assert.equal(new Set(latest.map((item) => item.runId)).size, 1);
+      assert.equal(new Set(latest.map((item) => item.providerTurnId)).size, 1);
+      for (const item of latest) {
+        const history = updates.filter((update) => update.id === item.id);
+        assert.isAtMost(history.length, 2);
+        assert.deepEqual(
+          { ...history[0], responseComplete: undefined },
+          { ...item, responseComplete: undefined },
+        );
+      }
     }).pipe(
       Effect.provide(
         Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

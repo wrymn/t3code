@@ -683,6 +683,14 @@ export function resolveAssistantMessageCopyState({
   };
 }
 
+function isCompletedResponse(entry: TimelineEntry): boolean {
+  return (
+    entry.kind === "message" &&
+    entry.projectedItem?.item.type === "assistant_message" &&
+    entry.projectedItem.item.responseComplete === true
+  );
+}
+
 function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
   const lastAssistantMessageIdByResponseKey = new Map<string, string>();
   let nullTurnResponseIndex = 0;
@@ -792,6 +800,7 @@ function deriveSupersededAttemptFolds(
     if (
       entry.attempt?.status !== "superseded" ||
       completeAttemptIds.has(entry.attempt.id) ||
+      isCompletedResponse(entry) ||
       unfoldedRunIds.has(entry.attempt.runId) ||
       (entry.kind === "message" && entry.message.role === "user") ||
       (entry.kind === "event" && entry.projectedItem.item.type === "handoff") ||
@@ -1138,7 +1147,8 @@ function deriveTurnFolds(input: {
         isCompaction ||
         timelineEntryIsPersistentResourceCard(entry) ||
         input.liveSubagentEntryIds.has(entry.id) ||
-        input.completeSupersededReplyEntryIds.has(entry.id)
+        input.completeSupersededReplyEntryIds.has(entry.id) ||
+        isCompletedResponse(entry)
       ) {
         continue;
       }
@@ -2032,7 +2042,9 @@ export function deriveMessagesTimelineRows(input: {
     const isTerminalAssistantMessage =
       timelineEntry.message.role === "assistant" &&
       terminalAssistantMessageIds.has(timelineEntry.message.id);
-    const showAssistantMeta = isTerminalAssistantMessage && !assistantResponseStillInProgress;
+    const showAssistantMeta =
+      (isTerminalAssistantMessage || isCompletedResponse(timelineEntry)) &&
+      !assistantResponseStillInProgress;
 
     nextRows.push({
       kind: "message",

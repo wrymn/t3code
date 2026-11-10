@@ -1884,7 +1884,9 @@ function renderFeedEntry(
       message.runId === props.unsettledTurnId;
     const showAssistantMeta =
       message.role === "assistant" &&
-      props.terminalAssistantMessageIds.has(message.id) &&
+      (props.terminalAssistantMessageIds.has(message.id) ||
+        (message.projectedItem?.item.type === "assistant_message" &&
+          message.projectedItem.item.responseComplete === true)) &&
       !assistantTurnStillInProgress &&
       !message.streaming;
 
