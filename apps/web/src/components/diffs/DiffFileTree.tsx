@@ -1,4 +1,4 @@
-import type { GitStatusEntry } from "@pierre/trees";
+import type { FileTreeRowDecorationContext, GitStatusEntry } from "@pierre/trees";
 import { FileTree, useFileTree, useFileTreeSelector } from "@pierre/trees/react";
 import { ChevronsDownUpIcon, ChevronsUpDownIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -22,11 +22,17 @@ import {
 
 export type { DiffFileTreeEntry } from "./diffFileTree.logic";
 
+const NO_COMMENT_COUNTS: ReadonlyMap<string, number> = new Map();
+
 interface DiffFileTreeProps {
   readonly entries: ReadonlyArray<DiffFileTreeEntry>;
+  /** Comment totals keyed by entry path; files with a positive total show a comment bubble. */
+  readonly commentCounts?: ReadonlyMap<string, number>;
   readonly onSelectFile: (path: string) => void;
   readonly selectedPath?: string | null;
   readonly revealRequestId?: number;
+  /** File paths shown at reduced opacity, such as pull request files marked viewed. */
+  readonly dimmedPaths?: ReadonlyArray<string>;
   readonly ariaLabel: string;
   readonly headerAccessory?: ReactNode;
   readonly footer?: ReactNode;
@@ -35,9 +41,11 @@ interface DiffFileTreeProps {
 
 export function DiffFileTree({
   entries,
+  commentCounts = NO_COMMENT_COUNTS,
   onSelectFile,
   selectedPath = null,
   revealRequestId = 0,
+  dimmedPaths = [],
   ariaLabel,
   headerAccessory,
   footer,
@@ -63,12 +71,22 @@ export function DiffFileTree({
     path: presented.modelPath(entry.path),
     status: entry.status,
   }));
+  const dimmedRowsCSS =
+    dimmedPaths.length === 0
+      ? ""
+      : `:is(${dimmedPaths
+          .map(
+            (path) =>
+              `button[data-type='item'][data-item-path="${CSS.escape(presented.modelPath(path))}"]`,
+          )
+          .join(", ")}):not(:hover, [data-item-focused]) { opacity: 0.2; }`;
   const syncingSelectionRef = useRef(false);
   const handledRevealRef = useRef<{
     path: string;
     revealRequestId: number;
   } | null>(null);
   const mountedPresentationRef = useRef<ReturnType<typeof diffFileTreeModel> | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   // The tree model keeps the first selection handler it was given.
   const handleSelectionChange = useStableCallback((selectedPaths: ReadonlyArray<string>) => {
@@ -79,6 +97,13 @@ export function DiffFileTree({
     }
   });
 
+  const renderRowDecoration = useStableCallback(({ item }: FileTreeRowDecorationContext) => {
+    if (item.kind !== "file") return null;
+    const count = commentCounts.get(presented.selectionPath(item.path)) ?? 0;
+    if (count === 0) return null;
+    return { icon: "t3-tree-icon-comment", title: count === 1 ? "1 comment" : `${count} comments` };
+  });
+
   const { model } = useFileTree({
     density: "compact",
     flattenEmptyDirectories: true,
@@ -86,6 +111,7 @@ export function DiffFileTree({
     icons,
     onSelectionChange: handleSelectionChange,
     paths: [],
+    renderRowDecoration,
     search: false,
     sort: ordering.sort,
     unsafeCSS: PIERRE_TREE_UNSAFE_CSS,
@@ -98,6 +124,24 @@ export function DiffFileTree({
   useEffect(() => {
     model.setIcons(icons);
   }, [icons, model]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Pierre fixes unsafeCSS at construction and has no per-row style hook, so dimmed rows are styled in its shadow root
+  useEffect(() => {
+    // The host attaches its shadow root on insertion, but the model only learns the host a commit later.
+    const shadowRoot = rootRef.current?.querySelector("file-tree-container")?.shadowRoot;
+    if (!shadowRoot || dimmedRowsCSS === "") return;
+    const style = document.createElement("style");
+    style.textContent = dimmedRowsCSS;
+    shadowRoot.append(style);
+    return () => style.remove();
+  }, [dimmedRowsCSS]);
+  const renderedCommentCountsRef = useRef(commentCounts);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- makes the Pierre tree model re-render row decorations when comment counts change
+  useEffect(() => {
+    if (renderedCommentCountsRef.current === commentCounts) return;
+    renderedCommentCountsRef.current = commentCounts;
+    model.setComposition(model.getComposition());
+  }, [commentCounts, model]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies path updates, ordering and git status to the imperative Pierre file tree model
   useEffect(() => {
@@ -180,7 +224,7 @@ export function DiffFileTree({
   }, [model, presented, revealRequestId, selectedPath]);
 
   return (
-    <div className={cn("flex min-h-0 flex-1 flex-col bg-background", className)}>
+    <div ref={rootRef} className={cn("flex min-h-0 flex-1 flex-col bg-background", className)}>
       <div
         className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 text-xs text-muted-foreground in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
         data-surface-subheader

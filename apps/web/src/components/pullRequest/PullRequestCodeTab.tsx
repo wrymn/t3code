@@ -619,6 +619,14 @@ function PullRequestCodeTab({
   );
   const fileTreeEntries = diffFileTreeEntries(files);
   const threadsByPath = reviewThreadsByPath(detail.reviewThreads);
+  const fileTreeCommentCounts = (() => {
+    const counts = new Map<string, number>();
+    for (const thread of detail.reviewThreads) {
+      const count = thread.commentCount ?? thread.comments.length;
+      counts.set(thread.path, (counts.get(thread.path) ?? 0) + count);
+    }
+    return counts;
+  })();
   // File membership does not guarantee a rendered hunk for the thread.
   const placedThreadIds = (() => {
     const placed = new Set<string>();
@@ -1669,6 +1677,10 @@ function PullRequestCodeTab({
             <DiffFileTree
               ariaLabel={`${capitalizeTerm(term)} #${detail.number} files`}
               entries={fileTreeEntries}
+              dimmedPaths={fileTreeEntries.flatMap((entry) =>
+                isFileViewed(entry.path) ? [entry.path] : [],
+              )}
+              commentCounts={fileTreeCommentCounts}
               onSelectFile={revealFile}
               footer={
                 nextCursor === null ? null : (
