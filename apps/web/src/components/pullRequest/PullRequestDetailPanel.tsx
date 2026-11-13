@@ -660,6 +660,7 @@ export function PullRequestDetailPanel({
     action: PullRequestAction,
     method?: PullRequestMergeMethod,
     updateMethod?: PullRequestUpdateMethod,
+    failureCopy?: { readonly title: string; readonly hint: string },
   ) => {
     onActed?.(action, "sent");
     const result = await runAction({
@@ -681,8 +682,10 @@ export function PullRequestDetailPanel({
           : actionFailureHints(terminology.singular)[action];
       toastManager.add({
         type: "error",
-        title: actionFailureLabels(terminology.singular)[action],
-        description: readableFailure(failure, hint),
+        title: failureCopy?.title ?? actionFailureLabels(terminology.singular)[action],
+        description: failureCopy
+          ? `${failureCopy.hint} ${readableFailure(failure, "")}`.trim()
+          : readableFailure(failure, hint),
       });
       onActed?.(action, "failed");
       return false;
@@ -1204,7 +1207,13 @@ export function PullRequestDetailPanel({
   const canDeleteBranchAfterMerge =
     detail?.capabilities.deleteBranch === true && can("delete-branch");
   const mergeAndDeleteBranch = async () => {
-    if (await perform("merge", selectedMergeMethod)) await perform("delete-branch");
+    if (!(await perform("merge", selectedMergeMethod))) return;
+    setPendingAction("delete-branch");
+    // A merge queue accepts the merge but keeps the PR open, so the host refuses the deletion.
+    await finishAction("delete-branch", undefined, undefined, {
+      title: "Merged, but the branch was kept",
+      hint: "If the merge was queued, delete the branch from the actions menu once it lands.",
+    });
   };
   const showsApproveWorkflows =
     workflowApprovalsRequired > 0 && !checksStale && can("approve-workflows");
