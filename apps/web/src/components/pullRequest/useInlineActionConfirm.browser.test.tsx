@@ -95,6 +95,7 @@ it.each(["merge", "enable-auto-merge"] as const)(
         statePresentation={null}
         pendingAction={null}
         perform={perform}
+        mergeAndDeleteBranch={null}
         resolveConflicts={null}
       />
     );

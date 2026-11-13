@@ -4,7 +4,14 @@ import type {
   PullRequestMergeMethod,
   PullRequestUpdateMethod,
 } from "@t3tools/contracts";
-import { CheckIcon, ChevronDownIcon, FolderGit2Icon, GitBranchIcon, PlayIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  FolderGit2Icon,
+  GitBranchIcon,
+  PlayIcon,
+  Trash2Icon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 
 import { AnimatedWidth } from "~/components/AnimatedWidth";
@@ -12,6 +19,7 @@ import { cn } from "~/lib/utils";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Group, GroupSeparator } from "../ui/group";
 import {
   Menu,
   MenuItem,
@@ -200,6 +208,7 @@ export function PullRequestPrimaryAction({
   statePresentation,
   pendingAction,
   perform,
+  mergeAndDeleteBranch,
   resolveConflicts,
 }: {
   pullRequestKey: string;
@@ -213,6 +222,8 @@ export function PullRequestPrimaryAction({
   statePresentation: ReturnType<typeof resolvePullRequestState> | null;
   pendingAction: PullRequestAction | null;
   perform: PerformPullRequestAction;
+  /** Present when the host lets this viewer delete the source branch after merging. */
+  mergeAndDeleteBranch: (() => Promise<void>) | null;
   resolveConflicts: ReactNode;
 }) {
   const inlineConfirm = useInlineActionConfirm(pullRequestKey);
@@ -328,10 +339,10 @@ export function PullRequestPrimaryAction({
           </TooltipPopup>
         </Tooltip>
       ) : primaryAction === "merge" ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <span className="inline-flex shrink-0">
+        <Group aria-label="Merge">
+          <Tooltip>
+            <TooltipTrigger
+              render={
                 <Button
                   size="xs"
                   variant="default"
@@ -348,39 +359,69 @@ export function PullRequestPrimaryAction({
                         ? "Confirm merge?"
                         : selectedMergeMethodLabel
                   }
+                />
+              }
+            >
+              {inlineConfirm.isArmed("merge") ? (
+                <CheckIcon aria-hidden className="size-3.5" />
+              ) : (
+                <PullRequestGlyph.merged aria-hidden className="size-3.5" />
+              )}
+              <AnimatedWidth className="@max-[30rem]/pr-header:hidden">
+                <span className="grid">
+                  <span aria-hidden className="invisible col-start-1 row-start-1">
+                    {selectedMergeMethodLabel}
+                  </span>
+                  <span className="col-start-1 row-start-1">
+                    {pendingAction === "merge"
+                      ? "Merging..."
+                      : inlineConfirm.isArmed("merge")
+                        ? "Confirm merge?"
+                        : selectedMergeMethodLabel}
+                  </span>
+                </span>
+              </AnimatedWidth>
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {mergeBlockedReason ??
+                (pendingAction === "merge"
+                  ? "Merging..."
+                  : inlineConfirm.isArmed("merge")
+                    ? "Confirm merge?"
+                    : selectedMergeMethodLabel)}
+            </TooltipPopup>
+          </Tooltip>
+          {mergeAndDeleteBranch ? (
+            <>
+              <GroupSeparator />
+              <Menu>
+                <MenuTrigger
+                  disabled={actionPending}
+                  render={
+                    <Button size="icon-xs" variant="default" aria-label="More merge options" />
+                  }
                 >
-                  {inlineConfirm.isArmed("merge") ? (
-                    <CheckIcon aria-hidden className="size-3.5" />
-                  ) : (
-                    <PullRequestGlyph.merged aria-hidden className="size-3.5" />
-                  )}
-                  <AnimatedWidth className="@max-[30rem]/pr-header:hidden">
-                    <span className="grid">
-                      <span aria-hidden className="invisible col-start-1 row-start-1">
-                        {selectedMergeMethodLabel}
-                      </span>
-                      <span className="col-start-1 row-start-1">
-                        {pendingAction === "merge"
-                          ? "Merging..."
-                          : inlineConfirm.isArmed("merge")
-                            ? "Confirm merge?"
-                            : selectedMergeMethodLabel}
+                  <ChevronDownIcon aria-hidden className="size-3.5" />
+                </MenuTrigger>
+                <MenuPopup align="end" side="bottom">
+                  <MenuItem
+                    disabled={mergeBlockedReason !== null}
+                    onClick={() => void mergeAndDeleteBranch()}
+                  >
+                    <Trash2Icon className="mt-1 size-3.5 shrink-0 self-start" />
+                    <span className="flex min-w-0 flex-col">
+                      <span>{selectedMergeMethodLabel}, then delete branch</span>
+                      <span className="text-xs text-muted-foreground">
+                        {mergeBlockedReason ??
+                          "Deletes the source branch on the host once the merge lands."}
                       </span>
                     </span>
-                  </AnimatedWidth>
-                </Button>
-              </span>
-            }
-          />
-          <TooltipPopup side="top">
-            {mergeBlockedReason ??
-              (pendingAction === "merge"
-                ? "Merging..."
-                : inlineConfirm.isArmed("merge")
-                  ? "Confirm merge?"
-                  : selectedMergeMethodLabel)}
-          </TooltipPopup>
-        </Tooltip>
+                  </MenuItem>
+                </MenuPopup>
+              </Menu>
+            </>
+          ) : null}
+        </Group>
       ) : (primaryAction === "merged" || primaryAction === "closed") &&
         statePresentation !== null ? (
         <Badge size="control" variant="outline">

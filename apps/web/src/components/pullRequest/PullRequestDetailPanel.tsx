@@ -1201,6 +1201,11 @@ export function PullRequestDetailPanel({
     );
     if (confirmed) void perform("delete-branch");
   };
+  const canDeleteBranchAfterMerge =
+    detail?.capabilities.deleteBranch === true && can("delete-branch");
+  const mergeAndDeleteBranch = async () => {
+    if (await perform("merge", selectedMergeMethod)) await perform("delete-branch");
+  };
   const showsApproveWorkflows =
     workflowApprovalsRequired > 0 && !checksStale && can("approve-workflows");
   const checksSummary = checksStale
@@ -1343,6 +1348,7 @@ export function PullRequestDetailPanel({
                 statePresentation={statePresentation}
                 pendingAction={pendingAction}
                 perform={perform}
+                mergeAndDeleteBranch={canDeleteBranchAfterMerge ? mergeAndDeleteBranch : null}
                 resolveConflicts={resolveConflictsControl}
               />
               {checkoutControl}
