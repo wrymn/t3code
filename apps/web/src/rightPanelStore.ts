@@ -127,6 +127,7 @@ interface RightPanelStoreState {
   ) => void;
   openSideChat: (ref: ScopedThreadRef, threadId: ThreadId) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
+  showDeviceList: (ref: ScopedThreadRef, surfaceId: string) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
@@ -725,6 +726,20 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           userAction(state, scopedThreadKey(ref), (current) =>
             upsertSurface(current, { id: `side-chat:${threadId}`, kind: "side-chat", threadId }),
           ),
+        ),
+      showDeviceList: (ref, surfaceId) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            if (!current.surfaces.some((entry) => entry.id === surfaceId)) return current;
+            const list: RightPanelSurface = { id: "device", kind: "device" };
+            return {
+              ...current,
+              surfaces: current.surfaces
+                .filter((entry) => entry.id !== list.id)
+                .map((entry) => (entry.id === surfaceId ? list : entry)),
+              activeSurfaceId: list.id,
+            };
+          }),
         ),
       renameDevice: (ref, surfaceId, title) =>
         set((state) =>

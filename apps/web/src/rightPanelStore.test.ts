@@ -135,6 +135,25 @@ describe("rightPanelStore", () => {
     ).toEqual([expect.objectContaining({ id: "file:src/app.ts" })]);
   });
 
+  it("swaps a device tab back to the device list in place", () => {
+    const store = useRightPanelStore.getState();
+    const device = {
+      hostId: "nucbox",
+      deviceId: "emulator-5580",
+      name: "Pixel",
+      platform: "android",
+    } as const;
+    store.open(refA, "device");
+    store.openDevice(refA, device);
+    store.openFile(refA, "src/app.ts");
+    store.showDeviceList(refA, "device:nucbox:emulator-5580");
+    store.openDevice(refA, device, true);
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual(["device", "file:src/app.ts"]);
+    expect(state.activeSurfaceId).toBe("device");
+  });
+
   it("records only closed tabs when a panel is hidden or a terminal tab closes", () => {
     const store = useRightPanelStore.getState();
     store.open(refA, "diff");

@@ -246,6 +246,9 @@ export function DevicePanel(props: {
               }
               visible={props.visible}
               onFloat={floatActive}
+              onBack={() =>
+                useRightPanelStore.getState().showDeviceList(props.threadRef, props.surface.id)
+              }
               onClose={() => closeActive(false)}
               onPowerOff={() => closeActive(true)}
             />
