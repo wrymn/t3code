@@ -1,11 +1,9 @@
 import type { DeviceHostSummary, DeviceSummary, EnvironmentId } from "@t3tools/contracts";
-import { ArrowLeft } from "lucide-react";
 import { useRef, useState } from "react";
 import {
   captureDeviceScreenshot,
   DeviceScreenshotError,
 } from "@t3tools/client-runtime/device/screenshot";
-import { Button } from "~/components/ui/button";
 import { refreshDeviceHubAccess, useDeviceHubAccess } from "~/state/device";
 import { DeviceControlsRail } from "./DeviceControlsRail";
 import { DeviceStreamView } from "./DeviceStreamView";
@@ -81,13 +79,7 @@ export function DeviceWorkspace(props: {
             {screenshotError ?? controls.error}
           </p>
         ) : null}
-        <div className="relative min-h-0 flex-1">
-          <div className="absolute top-3 left-3 z-10 rounded-full border border-border/50 bg-background/80 shadow-sm">
-            <Button size="sm" variant="ghost" onClick={props.onBack}>
-              <ArrowLeft />
-              Devices
-            </Button>
-          </div>
+        <div className="min-h-0 flex-1">
           <DeviceStreamView
             environmentId={props.environmentId}
             platform={props.device.platform}
@@ -111,6 +103,7 @@ export function DeviceWorkspace(props: {
                 toolsOpen={toolsOpen}
                 onTools={() => setToolsOpen(!toolsOpen)}
                 onFloat={props.onFloat}
+                onBack={props.onBack}
                 onClose={props.onClose}
                 onPowerOff={props.onPowerOff}
               />

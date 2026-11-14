@@ -1,5 +1,6 @@
 import type { DeviceHostSummary, DevicePlatform } from "@t3tools/contracts";
 import {
+  ArrowLeft,
   Camera,
   ChevronLeft,
   Home,
@@ -45,6 +46,7 @@ export function DeviceControlsRail(props: {
   toolsOpen: boolean;
   onTools: () => void;
   onFloat: () => void;
+  onBack: () => void;
   onClose: () => void;
   onPowerOff: () => void;
 }) {
@@ -60,6 +62,11 @@ export function DeviceControlsRail(props: {
       data-layout="rail"
       className="pointer-events-none absolute inset-y-0 right-0 z-10 flex w-14 flex-col items-center gap-2 overflow-y-auto [justify-content:safe_center] py-3 pr-2 [scrollbar-width:none]"
     >
+      <div className="pointer-events-auto flex shrink-0 flex-col items-center rounded-full border border-border/50 bg-background/80 p-2 shadow-sm">
+        <RailButton tooltipSide={popupSide} label="Back to devices" onClick={props.onBack}>
+          <ArrowLeft />
+        </RailButton>
+      </div>
       <div className="pointer-events-auto flex shrink-0 flex-col items-center gap-1 overflow-y-auto rounded-full border border-border/50 bg-background/80 p-2 shadow-sm [scrollbar-width:none]">
         <RailButton
           tooltipSide={popupSide}
