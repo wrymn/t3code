@@ -609,209 +609,202 @@ describe("vcsActionState", () => {
   });
 
   it.effect("invalidates persisted refs after successful and failed stacked actions", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const targetKey = { environmentId, cwd };
-        const successfulActionId = "invalidate-success";
-        const failedActionId = "invalidate-failure";
-        const interruptedActionId = "invalidate-interrupted";
-        const successfulTransportActionId = createVcsActionTransportId(
-          targetKey,
-          successfulActionId,
-        );
-        const failedTransportActionId = createVcsActionTransportId(targetKey, failedActionId);
-        const interruptedTransportActionId = createVcsActionTransportId(
-          targetKey,
-          interruptedActionId,
-        );
-        const { manager, registry, rpcInputs, removed } = yield* stackedActionHarness((input) =>
-          input.actionId === successfulTransportActionId
-            ? Stream.make(
+    Effect.gen(function* () {
+      const targetKey = { environmentId, cwd };
+      const successfulActionId = "invalidate-success";
+      const failedActionId = "invalidate-failure";
+      const interruptedActionId = "invalidate-interrupted";
+      const successfulTransportActionId = createVcsActionTransportId(targetKey, successfulActionId);
+      const failedTransportActionId = createVcsActionTransportId(targetKey, failedActionId);
+      const interruptedTransportActionId = createVcsActionTransportId(
+        targetKey,
+        interruptedActionId,
+      );
+      const { manager, registry, rpcInputs, removed } = yield* stackedActionHarness((input) =>
+        input.actionId === successfulTransportActionId
+          ? Stream.make(
+              progress({
+                kind: "action_finished",
+                actionId: successfulTransportActionId,
+                cwd,
+                action,
+                result,
+              }),
+            )
+          : input.actionId === interruptedTransportActionId
+            ? Stream.fromEffect(Effect.interrupt)
+            : Stream.make(
                 progress({
-                  kind: "action_finished",
-                  actionId: successfulTransportActionId,
+                  kind: "action_failed",
+                  actionId: failedTransportActionId,
                   cwd,
                   action,
-                  result,
+                  phase: "push",
+                  message: "push failed after creating the branch",
                 }),
-              )
-            : input.actionId === interruptedTransportActionId
-              ? Stream.fromEffect(Effect.interrupt)
-              : Stream.make(
-                  progress({
-                    kind: "action_failed",
-                    actionId: failedTransportActionId,
-                    cwd,
-                    action,
-                    phase: "push",
-                    message: "push failed after creating the branch",
-                  }),
-                ),
-        );
-        const state = vcsRefsCacheStateAtom({ environmentId });
+              ),
+      );
+      const state = vcsRefsCacheStateAtom({ environmentId });
 
-        expect(registry.get(state).revision).toBe(0);
-        const threadId = ThreadId.make("thread-stacked-action");
-        const projectId = ProjectId.make("project-stacked-action");
-        const successfulResult = yield* Effect.promise(() =>
-          manager.runStackedAction(targetKey).run(registry, {
-            actionId: successfulActionId,
-            action,
-            threadId,
-            projectId,
-          }),
-        );
+      expect(registry.get(state).revision).toBe(0);
+      const threadId = ThreadId.make("thread-stacked-action");
+      const projectId = ProjectId.make("project-stacked-action");
+      const successfulResult = yield* Effect.promise(() =>
+        manager.runStackedAction(targetKey).run(registry, {
+          actionId: successfulActionId,
+          action,
+          threadId,
+          projectId,
+        }),
+      );
 
-        expect(AsyncResult.isSuccess(successfulResult)).toBe(true);
-        expect(registry.get(manager.stateAtom(targetKey))).toEqual(EMPTY_VCS_ACTION_STATE);
-        expect(registry.get(state).revision).toBe(1);
-        expect(removed).toEqual([`${environmentId}:*`]);
-        expect(rpcInputs).toEqual([
-          { actionId: successfulTransportActionId, cwd, action, threadId, projectId },
-        ]);
+      expect(AsyncResult.isSuccess(successfulResult)).toBe(true);
+      expect(registry.get(manager.stateAtom(targetKey))).toEqual(EMPTY_VCS_ACTION_STATE);
+      expect(registry.get(state).revision).toBe(1);
+      expect(removed).toEqual([`${environmentId}:*`]);
+      expect(rpcInputs).toEqual([
+        { actionId: successfulTransportActionId, cwd, action, threadId, projectId },
+      ]);
 
-        const failedResult = yield* Effect.promise(() =>
-          manager.runStackedAction(targetKey).run(registry, {
-            actionId: failedActionId,
-            action,
-          }),
-        );
-
-        expect(AsyncResult.isFailure(failedResult)).toBe(true);
-        expect(registry.get(manager.stateAtom(targetKey))).toMatchObject({
-          isRunning: false,
-          operation: "run_change_request",
+      const failedResult = yield* Effect.promise(() =>
+        manager.runStackedAction(targetKey).run(registry, {
           actionId: failedActionId,
-          error: "Source control action 'commit_push' failed during push.",
-        });
-        expect(registry.get(manager.hookFailureAtom)).toBeNull();
-        expect(registry.get(state).revision).toBe(2);
-        expect(removed).toEqual([`${environmentId}:*`, `${environmentId}:*`]);
+          action,
+        }),
+      );
 
-        const interruptedResult = yield* Effect.promise(() =>
-          manager.runStackedAction(targetKey).run(registry, {
-            actionId: interruptedActionId,
-            action,
-          }),
-        );
+      expect(AsyncResult.isFailure(failedResult)).toBe(true);
+      expect(registry.get(manager.stateAtom(targetKey))).toMatchObject({
+        isRunning: false,
+        operation: "run_change_request",
+        actionId: failedActionId,
+        error: "Source control action 'commit_push' failed during push.",
+      });
+      expect(registry.get(manager.hookFailureAtom)).toBeNull();
+      expect(registry.get(state).revision).toBe(2);
+      expect(removed).toEqual([`${environmentId}:*`, `${environmentId}:*`]);
 
-        expect(AsyncResult.isFailure(interruptedResult)).toBe(true);
-        if (AsyncResult.isFailure(interruptedResult)) {
-          expect(Cause.hasInterruptsOnly(interruptedResult.cause)).toBe(true);
-        }
-        expect(registry.get(manager.stateAtom(targetKey))).toEqual(EMPTY_VCS_ACTION_STATE);
-        expect(registry.get(state).revision).toBe(3);
-        expect(removed).toEqual([`${environmentId}:*`, `${environmentId}:*`, `${environmentId}:*`]);
-      }),
-    ),
+      const interruptedResult = yield* Effect.promise(() =>
+        manager.runStackedAction(targetKey).run(registry, {
+          actionId: interruptedActionId,
+          action,
+        }),
+      );
+
+      expect(AsyncResult.isFailure(interruptedResult)).toBe(true);
+      if (AsyncResult.isFailure(interruptedResult)) {
+        expect(Cause.hasInterruptsOnly(interruptedResult.cause)).toBe(true);
+      }
+      expect(registry.get(manager.stateAtom(targetKey))).toEqual(EMPTY_VCS_ACTION_STATE);
+      expect(registry.get(state).revision).toBe(3);
+      expect(removed).toEqual([`${environmentId}:*`, `${environmentId}:*`, `${environmentId}:*`]);
+    }),
   );
   it.effect("retains a hook rejection for one-shot retries on its original target", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const targetKey = { environmentId, cwd };
-        const threadId = ThreadId.make("thread-hook-retry");
-        const outcomes = ["reject", "reject", "succeed", "reject", "succeed", "reject"];
-        let attempt = 0;
-        const { manager, registry, rpcInputs } = yield* stackedActionHarness((input) => {
-          const base = { actionId: input.actionId, cwd, action: input.action };
-          attempt += 1;
-          if (outcomes.shift() === "succeed") {
-            return Stream.make(progress({ ...base, kind: "action_finished", result }));
-          }
-          return Stream.fromIterable<GitActionProgressEvent>([
-            {
-              ...base,
-              kind: "phase_started",
-              phase: "commit",
-              label: "Committing...",
-              commitMessage: "Resolved subject",
-            },
-            {
-              ...base,
-              kind: "hook_output",
-              hookName: null,
-              stream: "stdout",
-              text: "checking assets",
-            },
-            { ...base, kind: "hook_started", hookName: "pre-commit" },
-            {
-              ...base,
-              kind: "hook_output",
-              hookName: "pre-commit",
-              stream: "stderr",
-              text: `attempt ${attempt}`,
-            },
-            { ...base, kind: "hook_finished", hookName: "pre-commit", exitCode: 2, durationMs: 3 },
-            { ...base, kind: "action_failed", phase: "commit", message: "pre-commit failed" },
-          ]);
-        });
-        const runFresh = (id: string) =>
-          Effect.promise(() =>
-            manager.runStackedAction(targetKey).run(registry, {
-              actionId: id,
-              action,
-              featureBranch: true,
-              filePaths: ["src/a.ts"],
-              threadId,
-            }),
-          );
-        const retry = (id: string, noVerify: boolean) =>
-          Effect.promise(() => manager.retryHookFailure(registry, { actionId: id, noVerify }));
-
-        const rejected = yield* runFresh("hook-first");
-        expect(AsyncResult.isFailure(rejected) && Cause.squash(rejected.cause)).toBeInstanceOf(
-          VcsActionHookRejectedError,
+    Effect.gen(function* () {
+      const targetKey = { environmentId, cwd };
+      const threadId = ThreadId.make("thread-hook-retry");
+      const outcomes = ["reject", "reject", "succeed", "reject", "succeed", "reject"];
+      let attempt = 0;
+      const { manager, registry, rpcInputs } = yield* stackedActionHarness((input) => {
+        const base = { actionId: input.actionId, cwd, action: input.action };
+        attempt += 1;
+        if (outcomes.shift() === "succeed") {
+          return Stream.make(progress({ ...base, kind: "action_finished", result }));
+        }
+        return Stream.fromIterable<GitActionProgressEvent>([
+          {
+            ...base,
+            kind: "phase_started",
+            phase: "commit",
+            label: "Committing...",
+            commitMessage: "Resolved subject",
+          },
+          {
+            ...base,
+            kind: "hook_output",
+            hookName: null,
+            stream: "stdout",
+            text: "checking assets",
+          },
+          { ...base, kind: "hook_started", hookName: "pre-commit" },
+          {
+            ...base,
+            kind: "hook_output",
+            hookName: "pre-commit",
+            stream: "stderr",
+            text: `attempt ${attempt}`,
+          },
+          { ...base, kind: "hook_finished", hookName: "pre-commit", exitCode: 2, durationMs: 3 },
+          { ...base, kind: "action_failed", phase: "commit", message: "pre-commit failed" },
+        ]);
+      });
+      const runFresh = (id: string) =>
+        Effect.promise(() =>
+          manager.runStackedAction(targetKey).run(registry, {
+            actionId: id,
+            action,
+            featureBranch: true,
+            filePaths: ["src/a.ts"],
+            threadId,
+          }),
         );
-        expect(registry.get(manager.hookFailureAtom)).toEqual({
-          target: targetKey,
-          actionId: "hook-first",
-          action,
-          hookName: "pre-commit",
-          exitCode: 2,
-          transcript: { lines: ["checking assets", "attempt 1"], chars: 24, droppedLines: 0 },
-          canSkipVerification: true,
-          commitMessage: "Resolved subject",
-          threadId,
-          projectId: null,
-          pendingRetry: null,
-        });
+      const retry = (id: string, noVerify: boolean) =>
+        Effect.promise(() => manager.retryHookFailure(registry, { actionId: id, noVerify }));
 
-        yield* retry("hook-bypass", true);
-        expect(rpcInputs[1]).toEqual({
-          actionId: createVcsActionTransportId(targetKey, "hook-bypass"),
-          cwd,
-          action,
-          commitMessage: "Resolved subject",
-          stagedOnly: true,
-          noVerify: true,
-          threadId,
-        });
-        expect(registry.get(manager.hookFailureAtom)).toMatchObject({
-          actionId: "hook-bypass",
-          transcript: { lines: ["checking assets", "attempt 2"] },
-          pendingRetry: null,
-        });
+      const rejected = yield* runFresh("hook-first");
+      expect(AsyncResult.isFailure(rejected) && Cause.squash(rejected.cause)).toBeInstanceOf(
+        VcsActionHookRejectedError,
+      );
+      expect(registry.get(manager.hookFailureAtom)).toEqual({
+        target: targetKey,
+        actionId: "hook-first",
+        action,
+        hookName: "pre-commit",
+        exitCode: 2,
+        transcript: { lines: ["checking assets", "attempt 1"], chars: 24, droppedLines: 0 },
+        canSkipVerification: true,
+        commitMessage: "Resolved subject",
+        threadId,
+        projectId: null,
+        pendingRetry: null,
+      });
 
-        const retried = yield* retry("hook-retry", false);
-        expect(retried !== null && AsyncResult.isSuccess(retried)).toBe(true);
-        expect(rpcInputs[2]).not.toHaveProperty("noVerify");
-        expect(rpcInputs[2]).toMatchObject({ stagedOnly: true, commitMessage: "Resolved subject" });
-        expect(registry.get(manager.hookFailureAtom)).toBeNull();
-        expect(yield* retry("nothing-to-retry", false)).toBeNull();
+      yield* retry("hook-bypass", true);
+      expect(rpcInputs[1]).toEqual({
+        actionId: createVcsActionTransportId(targetKey, "hook-bypass"),
+        cwd,
+        action,
+        commitMessage: "Resolved subject",
+        stagedOnly: true,
+        noVerify: true,
+        threadId,
+      });
+      expect(registry.get(manager.hookFailureAtom)).toMatchObject({
+        actionId: "hook-bypass",
+        transcript: { lines: ["checking assets", "attempt 2"] },
+        pendingRetry: null,
+      });
 
-        yield* runFresh("hook-second");
-        expect(registry.get(manager.hookFailureAtom)).not.toBeNull();
-        yield* runFresh("fresh-success");
-        expect(rpcInputs[4]).not.toHaveProperty("noVerify");
-        expect(rpcInputs[4]).toMatchObject({ featureBranch: true, filePaths: ["src/a.ts"] });
-        expect(registry.get(manager.hookFailureAtom)).toBeNull();
+      const retried = yield* retry("hook-retry", false);
+      expect(retried !== null && AsyncResult.isSuccess(retried)).toBe(true);
+      expect(rpcInputs[2]).not.toHaveProperty("noVerify");
+      expect(rpcInputs[2]).toMatchObject({ stagedOnly: true, commitMessage: "Resolved subject" });
+      expect(registry.get(manager.hookFailureAtom)).toBeNull();
+      expect(yield* retry("nothing-to-retry", false)).toBeNull();
 
-        yield* runFresh("hook-dismissed");
-        manager.dismissHookFailure(registry);
-        expect(registry.get(manager.hookFailureAtom)).toBeNull();
-        expect(rpcInputs).toHaveLength(6);
-      }),
-    ),
+      yield* runFresh("hook-second");
+      expect(registry.get(manager.hookFailureAtom)).not.toBeNull();
+      yield* runFresh("fresh-success");
+      expect(rpcInputs[4]).not.toHaveProperty("noVerify");
+      expect(rpcInputs[4]).toMatchObject({ featureBranch: true, filePaths: ["src/a.ts"] });
+      expect(registry.get(manager.hookFailureAtom)).toBeNull();
+
+      yield* runFresh("hook-dismissed");
+      manager.dismissHookFailure(registry);
+      expect(registry.get(manager.hookFailureAtom)).toBeNull();
+      expect(rpcInputs).toHaveLength(6);
+    }),
   );
 });
 
