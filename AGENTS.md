@@ -155,6 +155,7 @@ For mobile verification, a missing or outdated native client is an install step,
 - Keep shared fork instructions on `main`. New independent fork branches should start from `main`; existing branches receive instruction updates by merging `main`.
 - Report separately whether changes are committed, included in a successful build, or installed and running. A successful build does not establish installation.
 - Before deleting a temporary branch, verify its commits are preserved in the owning fork branch and its worktree is clean. Remove the redundant worktree and branch when cleanup is requested.
+- The fork's agent diary lives on the orphan `agent-diary` branch, never in code branches. Read `git show agent-diary:fork-agent-diary/README.md` before reviewing a branch or opening an upstream PR, record every code review there, and run its `guard` on a branch before pushing it for an upstream PR.
 
 ## Pull requests
 
