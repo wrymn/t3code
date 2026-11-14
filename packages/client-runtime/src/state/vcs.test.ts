@@ -7,8 +7,8 @@ import {
   type VcsListRefsInput,
   type VcsListRefsResult,
   type VcsStatusResult,
-  type VcsStatusStreamEvent,
   type ServerConfig,
+  type VcsStatusStreamEvent,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
