@@ -1164,7 +1164,7 @@ function StagingFileDiff(props: {
       composerDraftTarget={props.composerDraftTarget}
       renderHeaderFilenameSuffix={() => null}
       renderHeaderPrefix={() => null}
-      onRevealSearchMatch={() => {}}
+      onFileCollapsedChange={() => {}}
       options={{
         diffStyle: "unified",
         lineDiffType: "none",
