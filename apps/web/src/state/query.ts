@@ -20,6 +20,10 @@ export interface EnvironmentQueryView<A, E = unknown> {
 
 export function formatEnvironmentQueryError(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);
+  // Effect RPC servers reject methods they do not have with this string defect.
+  if (typeof error === "string" && error.startsWith("Unknown request tag:")) {
+    return "This environment's T3 Code server is too old for this feature. Update T3 Code there.";
+  }
   return error instanceof Error && error.message.trim().length > 0
     ? error.message
     : "The environment request failed.";
