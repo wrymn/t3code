@@ -1,5 +1,8 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import * as Schema from "effect/Schema";
 import type { DeviceHostSummary, DeviceSummary, EnvironmentId } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import { useRef, useState } from "react";
 import {
   captureDeviceScreenshot,
@@ -27,6 +30,7 @@ export function DeviceWorkspace(props: {
   onClose: () => void;
   onPowerOff: () => void;
 }) {
+  const gt = useGT();
   const [toolsOpen, setToolsOpen] = useState(false);
   const [axOverlay, setAxOverlay] = useState(false);
   const [screenshotPending, setScreenshotPending] = useState(false);
@@ -66,7 +70,7 @@ export function DeviceWorkspace(props: {
         if (isDeviceScreenshotError(cause) && cause.status === 401)
           refreshDeviceHubAccess(props.environmentId);
         setScreenshotError(
-          cause instanceof Error ? cause.message : "Screenshot capture failed. Try again.",
+          thrownErrorMessage(cause, m) ?? gt("Screenshot capture failed. Try again."),
         );
       })
       .finally(() => {
