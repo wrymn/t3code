@@ -561,6 +561,56 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  it.effect("gives Windows npm commands only the managed prefix spelling", () => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-windows-npm-prefix-",
+      });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const environment = { ...toolchain.environment, NPM_CONFIG_PREFIX: "C:\\inherited-npm" };
+      const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const npmEnvironments: Array<Record<string, unknown>> = [];
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(
+        Effect.provideService(HostProcess.Environment, environment),
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(SpawnExecutableResolution, (command) =>
+          command === "npm" ? toolchain.npmPath : undefined,
+        ),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            if (command._tag === "StandardCommand" && command.command === toolchain.npmPath) {
+              npmEnvironments.push({ ...command.options.env });
+            }
+            return realSpawner.spawn(command);
+          }),
+        ),
+      );
+
+      yield* resolver.resolve(settings(), "C:\\workspace", environment).pipe(Effect.ignore);
+
+      expect(npmEnvironments.length).toBeGreaterThan(0);
+      for (const env of npmEnvironments) {
+        expect(Object.keys(env).filter((key) => key.toLowerCase() === "npm_config_prefix")).toEqual(
+          ["npm_config_prefix"],
+        );
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
   it.effect("keeps only the end of a failed install's output in its error", () => {
     const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
     return Effect.gen(function* () {
@@ -1553,6 +1603,52 @@ describe("AcpRegistrySupport", () => {
           requests += 1;
           return Effect.succeed(
             HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent))),
+          );
+        }),
+      ),
+    );
+  });
+
+  it.effect("recovers inspection from a corrupt cache once the registry is reachable", () => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    let online = false;
+    let requests = 0;
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-offline-",
+      });
+      yield* fileSystem.makeDirectory(`${cacheDir}/acp-registry`, { recursive: true });
+      yield* fileSystem.writeFileString(`${cacheDir}/acp-registry/registry.json`, "{not json");
+      const options = { cacheDir, toolsDir: `${cacheDir}/tools`, registryUrl };
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog(options);
+
+      const offline = yield* resolver.inspect(settings()).pipe(Effect.flip);
+      expect(offline.reason).toBe("registry_unavailable");
+
+      online = true;
+      const concurrent = yield* Effect.all(
+        [resolver.inspect(settings()), resolver.inspect(settings())],
+        { concurrency: "unbounded" },
+      );
+      expect(concurrent).toMatchObject([{ status: "ready" }, { status: "ready" }]);
+      expect(requests).toBe(2);
+
+      const restarted = yield* AcpRegistrySupport.makeAcpRegistryCatalog(options);
+      expect(yield* restarted.inspect(settings())).toMatchObject({ status: "ready" });
+      expect(requests).toBe(2);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) => {
+          requests += 1;
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              online
+                ? new Response(makeRegistry(agent))
+                : new Response("unavailable", { status: 503 }),
+            ),
           );
         }),
       ),
