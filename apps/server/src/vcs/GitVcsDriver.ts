@@ -1,5 +1,6 @@
 import * as NodeBuffer from "node:buffer";
 
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -48,6 +49,7 @@ import {
   splitNullSeparatedGitStdoutPaths,
 } from "./GitVcsDriverCore.ts";
 import * as CheckoutCloner from "./CheckoutCloner.ts";
+import * as CheckpointUntrackedBlobs from "./checkpointUntrackedBlobs.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
@@ -502,6 +504,20 @@ const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 // one, so an unknown subject keeps its commit attributed.
 const REF_MOVE_REFLOG_SUBJECT =
   /^(?:$|(?:checkout|reset|branch|clone|fetch)\b|[^:]*\((?:start|finish|abort|reset)\): |(?:merge|pull|rebase|cherry-pick)\b[^()]*: fast-forward$)/i;
+
+function parseCheckpointReflogEntry(line: string) {
+  const [commit = "", selector = "", ...subject] = line.split(" ");
+  return {
+    commit,
+    fetched: selector.startsWith("refs/remotes/"),
+    subject: subject.join(" "),
+  };
+}
+
+function isLocalReflogCreation(entry: ReturnType<typeof parseCheckpointReflogEntry>) {
+  return !entry.fetched && !REF_MOVE_REFLOG_SUBJECT.test(entry.subject);
+}
+
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
   "-c",
   "core.fsmonitor=false",
@@ -1083,6 +1099,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       }),
     );
 
+  const untrackedBlobs = CheckpointUntrackedBlobs.make(execute, fileSystem);
+
   const checkpoints: VcsDriver.VcsCheckpointOps = {
     captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
       const operation = VcsProcess.CHECKPOINT_CAPTURE_OPERATION;
@@ -1108,6 +1126,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         lastMove !== undefined && lastMove.to === head
           ? `${lastMove.at} ${headMoves.filter((move) => move.at === lastMove.at).length}`
           : undefined;
+      const startedAt = yield* Clock.currentTimeMillis;
       const indexId = yield* random.uuidV4();
       const tempIndexPath = path.join(gitCommonDir, `t3-checkpoint-index-${indexId}`);
       const hostEnv = yield* HostProcess.Environment;
@@ -1396,7 +1415,17 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           }
         }
 
-        const stageFiles = (exclusions: ReadonlyArray<string>) =>
+        // Untracked files have no stat data in a new index, so git add would rehash every one.
+        const untracked =
+          topLevel === undefined || head === undefined || sparseCheckout || workspaceIgnored
+            ? undefined
+            : { cwd: input.cwd, topLevel, head, env: commitEnv };
+        const { reused, before } =
+          untracked === undefined
+            ? CheckpointUntrackedBlobs.NOTHING
+            : yield* untrackedBlobs.reuse({ ...untracked, indexConfig });
+
+        const stageFiles = (exclusions: ReadonlyArray<string>, ignoreErrors = false) =>
           execute({
             operation,
             cwd: input.cwd,
@@ -1408,6 +1437,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               "-c",
               "core.safecrlf=false",
               "add",
+              // Unreadable files keep their indexed version and unreadable new files are left out.
+              ...(ignoreErrors ? ["--ignore-errors"] : []),
               ...(sparseCheckout ? ["--sparse"] : []),
               // add -A rejects ignored directories even when they contain tracked files.
               workspaceIgnored ? "-u" : "-A",
@@ -1416,7 +1447,15 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               ...exclusions,
             ],
             env: commitEnv,
-          });
+          }).pipe(
+            // With --ignore-errors, exit 1 only reports the files it skipped.
+            Effect.catchIf(
+              (error) =>
+                ignoreErrors && error._tag === "VcsProcessExitError" && error.exitCode === 1,
+              () => Effect.void,
+            ),
+          );
+        const stagingAt = yield* Clock.currentTimeMillis;
         yield* stageFiles([]).pipe(
           Effect.catchTags({
             VcsProcessExitError: (error) =>
@@ -1464,8 +1503,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                     exclusions.push(`:(exclude,literal)${entry}`);
                   }
                 }
-                if (exclusions.length === 0) return yield* error;
-                return yield* stageFiles(exclusions);
+                return yield* stageFiles(exclusions, true);
               }).pipe(
                 Effect.timeoutOrElse({
                   duration: CHECKPOINT_RECOVERY_TIMEOUT,
@@ -1474,6 +1512,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               ),
           }),
         );
+
+        const stagingMs = (yield* Clock.currentTimeMillis) - stagingAt;
 
         const writeTreeResult = yield* execute({
           operation,
@@ -1740,6 +1780,16 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           cwd: input.cwd,
           args: [...durableWrite, "update-ref", input.checkpointRef, commitOid],
         });
+        if (untracked !== undefined) {
+          yield* untrackedBlobs.remember({
+            ...untracked,
+            tree: treeOid,
+            startedAt,
+            stagingMs,
+            reused,
+            before,
+          });
+        }
       }).pipe(Effect.ensuring(cleanupTempIndex));
 
       // The tree records only each submodule's HEAD, so submodules keep their own ref.
@@ -2106,13 +2156,14 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         return null;
       }
 
-      const listLines = (args: ReadonlyArray<string>, stdin?: string) =>
+      const listLines = (args: ReadonlyArray<string>, stdin?: string, timeoutMs?: number) =>
         execute({
           operation,
           cwd: input.cwd,
           // log.showSignature prints verification text into the output.
           args: ["-c", "log.showSignature=false", ...args],
           ...(stdin === undefined ? {} : { stdin }),
+          ...(timeoutMs === undefined ? {} : { timeoutMs }),
           maxOutputBytes: VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
           outputMode: "error",
         }).pipe(Effect.map((result) => result.stdout.split("\n").filter((line) => line !== "")));
@@ -2147,14 +2198,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           "--all",
           `--since=@${capturedAt}`,
           "--format=%H %gD %gs",
-        ])).map((line) => {
-          const [commit = "", selector = "", ...subject] = line.split(" ");
-          return {
-            commit,
-            fetched: selector.startsWith("refs/remotes/"),
-            subject: subject.join(" "),
-          };
-        });
+        ])).map(parseCheckpointReflogEntry);
         // A push records commits this repository already had.
         const fetchedTips = new Set(
           entries
@@ -2164,9 +2208,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         if (fetchedTips.size === 0) return fetchedTips;
         // Fetching another branch can deliver a commit that was made here and pushed.
         const createdHere = new Set(
-          entries
-            .filter((entry) => !entry.fetched && !REF_MOVE_REFLOG_SUBJECT.test(entry.subject))
-            .map((entry) => entry.commit),
+          entries.filter(isLocalReflogCreation).map((entry) => entry.commit),
         );
         const fetched = yield* listLines(
           ["rev-list", `--since=@${capturedAt}`, "--stdin"],
@@ -2185,9 +2227,38 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         ],
         { concurrency: "unbounded" },
       );
+      // Local creation evidence already overrides fetched history in the full scan.
+      const unprovenCommits = new Set(recentCommits);
+      if (recentCommits.length > 0 && recentCommits.length <= HEAD_MOVES_SCAN_LIMIT) {
+        yield* listLines(
+          [
+            "log",
+            "--walk-reflogs",
+            `--max-count=${HEAD_MOVES_SCAN_LIMIT}`,
+            "HEAD",
+            `--since=@${capturedAt}`,
+            "--format=%H %gD %gs",
+          ],
+          undefined,
+          1_000,
+        ).pipe(
+          Effect.map((lines) => {
+            for (const line of lines) {
+              const entry = parseCheckpointReflogEntry(line);
+              if (isLocalReflogCreation(entry)) unprovenCommits.delete(entry.commit);
+            }
+          }),
+          Effect.catch((error) =>
+            Effect.logDebug("local authorship probe failed; using full reflogs", {
+              operation,
+              errorTag: error._tag,
+            }),
+          ),
+        );
+      }
       // Without readable reflogs every recent commit stays attributed, as before.
       const importedCommits =
-        recentCommits.length === 0
+        unprovenCommits.size === 0
           ? new Set<string>()
           : yield* listImportedCommits.pipe(Effect.orElseSucceed(() => new Set<string>()));
       const ownCommits = recentCommits.filter((commit) => !importedCommits.has(commit));
