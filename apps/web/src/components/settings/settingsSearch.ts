@@ -1187,9 +1187,9 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "browser-float-preview-on-panel-close",
-    title: "Float preview on panel close",
+    title: msg("Float preview on panel close"),
     to: "/settings/browser",
-    searchTerms: ["close right panel browser device floating window mini player hide"],
+    searchTerms: [msg("close right panel browser device floating window mini player hide")],
   },
   {
     id: "automatic-pull",

@@ -1182,17 +1182,21 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
 }
 
 function BrowserFloatPreviewOnPanelCloseSetting() {
+  const searchableSetting = useSearchableSetting();
+  const gt = useGT();
   const floatOnClose = useClientSettings((settings) => settings.browserFloatPreviewOnPanelClose);
   const updateSettings = useUpdatePrimarySettings();
 
   return (
     <SettingsRow
       {...searchableSetting("browser-float-preview-on-panel-close")}
-      description="Keep a browser or device on screen as a floating preview when you close the right panel."
+      description={gt(
+        "Keep a browser or device on screen as a floating preview when you close the right panel.",
+      )}
       resetAction={
         floatOnClose !== DEFAULT_BROWSER_FLOAT_PREVIEW_ON_PANEL_CLOSE ? (
           <SettingResetButton
-            label="float preview on panel close"
+            ariaLabel={gt("Reset float preview on panel close to default")}
             onClick={() =>
               updateSettings({
                 browserFloatPreviewOnPanelClose: DEFAULT_BROWSER_FLOAT_PREVIEW_ON_PANEL_CLOSE,
@@ -1207,7 +1211,7 @@ function BrowserFloatPreviewOnPanelCloseSetting() {
           onCheckedChange={(checked) =>
             updateSettings({ browserFloatPreviewOnPanelClose: Boolean(checked) })
           }
-          aria-label="Float preview on panel close"
+          aria-label={gt("Float preview on panel close")}
         />
       }
     />
