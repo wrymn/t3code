@@ -27,6 +27,12 @@ export function formatEnvironmentQueryError(
   resolve: MessageResolver = m,
 ): string {
   const error = Cause.squash(cause);
+  // Effect RPC servers reject methods they do not have with this string defect.
+  if (typeof error === "string" && error.startsWith("Unknown request tag:")) {
+    return resolve(
+      msg("This environment's T3 Code server is too old for this feature. Update T3 Code there."),
+    );
+  }
   return (
     (error instanceof Error ? errorDisplayMessage(error, resolve) : null) ??
     resolve(msg("The environment request failed."))

@@ -586,6 +586,10 @@ export function StagingPanel(props: {
       ? `Check out a feature branch before creating a ${terminology.singular}.`
       : null);
   const hasStagedFiles = (staging?.staged.length ?? 0) > 0;
+  const pushTarget =
+    gitStatus?.refName != null
+      ? `→ ${gitStatus.refName}${gitStatus.hasUpstream ? "" : " (new)"}`
+      : null;
   const commitChoices: StagingCommitChoice[] = [
     { id: "commit", label: "Commit", disabledReason: commitDisabledReason },
   ];
@@ -593,12 +597,14 @@ export function StagingPanel(props: {
     commitChoices.push({
       id: "commit_push",
       label: "Commit & push",
+      detail: pushTarget,
       disabledReason: commitDisabledReason ?? publishDisabledReason,
     });
     if (gitStatus.pr?.state !== "open") {
       commitChoices.push({
         id: "commit_push_pr",
         label: `Commit, push & create ${terminology.shortLabel}`,
+        detail: pushTarget,
         disabledReason: commitDisabledReason ?? prDisabledReason,
       });
     }
@@ -606,6 +612,7 @@ export function StagingPanel(props: {
       commitChoices.push({
         id: "push",
         label: "Push",
+        detail: pushTarget,
         disabledReason:
           publishDisabledReason ?? (gitStatus.aheadCount > 0 ? null : "No local commits to push."),
       });

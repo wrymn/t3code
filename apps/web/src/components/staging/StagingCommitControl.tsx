@@ -17,6 +17,8 @@ export interface StagingCommitChoice {
   readonly label: string;
   /** Why the choice cannot run now. Null or omitted means it can. */
   readonly disabledReason?: string | null;
+  /** Secondary line, such as the branch a push lands on. Hidden while disabled. */
+  readonly detail?: string | null;
 }
 
 /**
@@ -89,12 +91,26 @@ export function StagingCommitControl(props: {
                 <MenuItem
                   key={choice.id}
                   disabled={choice.disabledReason != null}
+                  aria-label={choice.label}
+                  aria-describedby={`${reasonId}-${choice.id}`}
                   onClick={() => onSelect(choice.id)}
                 >
                   <span className="flex min-w-0 flex-col">
                     <span className="truncate">{choice.label}</span>
                     {choice.disabledReason != null ? (
-                      <span className="text-xs text-muted-foreground">{choice.disabledReason}</span>
+                      <span
+                        id={`${reasonId}-${choice.id}`}
+                        className="text-xs text-muted-foreground"
+                      >
+                        {choice.disabledReason}
+                      </span>
+                    ) : choice.detail != null ? (
+                      <span
+                        id={`${reasonId}-${choice.id}`}
+                        className="truncate font-mono text-2xs text-muted-foreground/70"
+                      >
+                        {choice.detail}
+                      </span>
                     ) : null}
                   </span>
                 </MenuItem>

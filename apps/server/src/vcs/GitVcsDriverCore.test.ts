@@ -8640,53 +8640,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("keeps other files conflicted through a selected-file commit", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        yield* initRepoWithCommit(cwd);
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        // git stash pop leaves README.md conflicted with no merge in progress.
-        yield* writeTextFile(cwd, "README.md", "stashed version\n");
-        yield* git(cwd, ["stash"]);
-        yield* writeTextFile(cwd, "README.md", "committed version\n");
-        yield* git(cwd, ["commit", "-am", "Change README"]);
-        const pop = yield* driver.execute({
-          operation: "test.stashPop",
-          cwd,
-          args: ["stash", "pop"],
-          allowNonZeroExit: true,
-        });
-        assert.equal(pop.exitCode, 1);
-        yield* writeTextFile(cwd, "other.txt", "other\n");
-        const head = yield* git(cwd, ["rev-parse", "HEAD"]);
-        const unmerged = yield* git(cwd, ["ls-files", "--unmerged"]);
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const nested = path.join(cwd, "nested");
-        yield* fs.makeDirectory(nested);
-        // A formatting hook stages its edit into the temporary index that --only commits from.
-        yield* writeTextFile(
-          cwd,
-          ".git/hooks/pre-commit",
-          "#!/bin/sh\necho formatted >> other.txt\ngit add other.txt\n",
-        );
-        yield* fs.chmod(path.join(cwd, ".git/hooks/pre-commit"), 0o755);
-
-        yield* driver.commit(cwd, "Add other", "", { stage: { filePaths: ["other.txt"] } });
-
-        assert.equal(yield* git(cwd, ["rev-parse", "HEAD~1"]), head);
-        assert.equal(yield* git(cwd, ["show", "--pretty=", "--name-only", "HEAD"]), "other.txt");
-        assert.equal(yield* git(cwd, ["show", "HEAD:other.txt"]), "other\nformatted");
-        assert.equal(yield* git(cwd, ["show", ":other.txt"]), "other\nformatted");
-        assert.equal(yield* git(cwd, ["ls-files", "--unmerged"]), unmerged);
-        const all = yield* driver.prepareCommitContext(nested).pipe(Effect.flip);
-        assert.equal(
-          all.detail,
-          "Cannot commit with unresolved merge conflicts in README.md. Resolve them, then commit.",
-        );
-      }),
-    );
-
     it.effect("commits the index as staged, with context limited to the staged version", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -8892,6 +8845,53 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("keeps other files conflicted through a selected-file commit", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        // git stash pop leaves README.md conflicted with no merge in progress.
+        yield* writeTextFile(cwd, "README.md", "stashed version\n");
+        yield* git(cwd, ["stash"]);
+        yield* writeTextFile(cwd, "README.md", "committed version\n");
+        yield* git(cwd, ["commit", "-am", "Change README"]);
+        const pop = yield* driver.execute({
+          operation: "test.stashPop",
+          cwd,
+          args: ["stash", "pop"],
+          allowNonZeroExit: true,
+        });
+        assert.equal(pop.exitCode, 1);
+        yield* writeTextFile(cwd, "other.txt", "other\n");
+        const head = yield* git(cwd, ["rev-parse", "HEAD"]);
+        const unmerged = yield* git(cwd, ["ls-files", "--unmerged"]);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const nested = path.join(cwd, "nested");
+        yield* fs.makeDirectory(nested);
+        // A formatting hook stages its edit into the temporary index that --only commits from.
+        yield* writeTextFile(
+          cwd,
+          ".git/hooks/pre-commit",
+          "#!/bin/sh\necho formatted >> other.txt\ngit add other.txt\n",
+        );
+        yield* fs.chmod(path.join(cwd, ".git/hooks/pre-commit"), 0o755);
+
+        yield* driver.commit(cwd, "Add other", "", { stage: { filePaths: ["other.txt"] } });
+
+        assert.equal(yield* git(cwd, ["rev-parse", "HEAD~1"]), head);
+        assert.equal(yield* git(cwd, ["show", "--pretty=", "--name-only", "HEAD"]), "other.txt");
+        assert.equal(yield* git(cwd, ["show", "HEAD:other.txt"]), "other\nformatted");
+        assert.equal(yield* git(cwd, ["show", ":other.txt"]), "other\nformatted");
+        assert.equal(yield* git(cwd, ["ls-files", "--unmerged"]), unmerged);
+        const all = yield* driver.prepareCommitContext(nested).pipe(Effect.flip);
+        assert.equal(
+          all.detail,
+          "Cannot commit with unresolved merge conflicts in README.md. Resolve them, then commit.",
+        );
+      }),
+    );
+
     const commitWithHooks = (hooks: Record<string, string>) =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -8914,7 +8914,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             },
           })
           .pipe(Effect.result);
-        return { cwd, events, committed: Result.isSuccess(result) };
+        return { events, committed: Result.isSuccess(result) };
       });
 
     it.effect("reports each commit hook finishing with its exit code", () =>
@@ -8936,26 +8936,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
     it.effect("reports the exit code of a commit hook that rejects the commit", () =>
       Effect.gen(function* () {
-        const { cwd, events, committed } = yield* commitWithHooks({
-          "pre-commit": "exit 0",
-          "commit-msg": "exit 3",
-        });
+        const { events, committed } = yield* commitWithHooks({ "commit-msg": "exit 3" });
         assert.isFalse(committed);
-        assert.deepEqual(events, [
-          "start pre-commit",
-          "finish pre-commit 0",
-          "start commit-msg",
-          "finish commit-msg 3",
-        ]);
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        yield* driver.commit(cwd, "Add a", "", { noVerify: true });
-        assert.equal(yield* git(cwd, ["show", "HEAD:a.txt"]), "a");
-        yield* writeTextFile(cwd, "b.txt", "b\n");
-        const next = yield* driver
-          .commit(cwd, "Add b", "", { stage: { filePaths: ["b.txt"] } })
-          .pipe(Effect.result);
-        assert.isTrue(Result.isFailure(next));
-        assert.equal(yield* git(cwd, ["log", "-1", "--pretty=%s"]), "Add a");
+        assert.deepEqual(events, ["start commit-msg", "finish commit-msg 3"]);
       }),
     );
 

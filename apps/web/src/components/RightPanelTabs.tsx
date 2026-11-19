@@ -390,7 +390,7 @@ function RightPanelEmptyState(props: {
       icon: GitCommitVertical,
       shortcut: "G",
       available: props.diffAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.diff,
+      disabledReason: messages(SURFACE_UNAVAILABLE_HINTS.diff),
       onClick: props.onAddStaging,
     },
     {
@@ -715,10 +715,10 @@ function SurfaceIcon({
       );
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
-    case "staging":
-      return <GitCommitVertical className="size-3 shrink-0" />;
     case "issue":
       return <IssueSurfaceIcon surface={surface} environmentId={environmentId} />;
+    case "staging":
+      return <GitCommitVertical className="size-3 shrink-0" />;
     case "side-chat":
       return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;
     case "device":
@@ -1225,7 +1225,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       icon: GitCommitVertical,
       shortcut: "G",
       available: props.diffAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.diff,
+      disabledReason: messages(SURFACE_DISABLED_REASONS.diff),
       onClick: props.onAddStaging,
     },
     {
