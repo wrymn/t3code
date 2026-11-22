@@ -1270,7 +1270,9 @@ function CheckoutGitActionsControl({
             environmentId: sourceControlScope.environmentId,
             input: { cwd: sourceControlScope.cwd, localOnly: true },
           });
-          if (status._tag === "Success") persistThreadBranchSync(status.value.refName, true);
+          if (status._tag === "Success" && status.value.refName) {
+            branchFollower?.follow(status.value.refName);
+          }
         }
         return false;
       }

@@ -25,6 +25,7 @@ import * as Persistence from "../platform/persistence.ts";
 import { runStreamGuarded, RpcPermissionGuard } from "../rpc/client.ts";
 import {
   createRuntimeCommand,
+  runAtomCommand,
   runStreamInEnvironment,
   type AtomCommand,
   type AtomCommandResult,
@@ -821,7 +822,7 @@ export function createVcsActionManager<R, E>(
         ...failure,
         pendingRetry: { actionId: input.actionId, noVerify: input.noVerify },
       });
-      return getRunStackedActionCommand(failure.target).run(registry, {
+      return runAtomCommand(registry, getRunStackedActionCommand(failure.target), {
         actionId: input.actionId,
         action: failure.action,
         stagedOnly: true,

@@ -756,7 +756,7 @@ describe("vcsActionState", () => {
       });
       const runFresh = (id: string) =>
         Effect.promise(() =>
-          manager.runStackedAction(targetKey).run(registry, {
+          runAtomCommand(registry, manager.runStackedAction(targetKey), {
             actionId: id,
             action,
             featureBranch: true,
