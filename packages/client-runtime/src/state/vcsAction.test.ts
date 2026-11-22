@@ -31,7 +31,7 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
-import type { AtomCommandResult } from "./runtime.ts";
+import { runAtomCommand, type AtomCommandResult } from "./runtime.ts";
 import {
   appendVcsHookTranscript,
   applyVcsActionProgressEvent,
@@ -650,12 +650,17 @@ describe("vcsActionState", () => {
       const threadId = ThreadId.make("thread-stacked-action");
       const projectId = ProjectId.make("project-stacked-action");
       const successfulResult = yield* Effect.promise(() =>
-        manager.runStackedAction(targetKey).run(registry, {
-          actionId: successfulActionId,
-          action,
-          threadId,
-          projectId,
-        }),
+        runAtomCommand(
+          registry,
+          manager.runStackedAction(targetKey),
+          {
+            actionId: successfulActionId,
+            action,
+            threadId,
+            projectId,
+          },
+          { reportFailure: false, reportDefect: false },
+        ),
       );
 
       expect(AsyncResult.isSuccess(successfulResult)).toBe(true);
@@ -667,10 +672,15 @@ describe("vcsActionState", () => {
       ]);
 
       const failedResult = yield* Effect.promise(() =>
-        manager.runStackedAction(targetKey).run(registry, {
-          actionId: failedActionId,
-          action,
-        }),
+        runAtomCommand(
+          registry,
+          manager.runStackedAction(targetKey),
+          {
+            actionId: failedActionId,
+            action,
+          },
+          { reportFailure: false, reportDefect: false },
+        ),
       );
 
       expect(AsyncResult.isFailure(failedResult)).toBe(true);
@@ -685,10 +695,15 @@ describe("vcsActionState", () => {
       expect(removed).toEqual([`${environmentId}:*`, `${environmentId}:*`]);
 
       const interruptedResult = yield* Effect.promise(() =>
-        manager.runStackedAction(targetKey).run(registry, {
-          actionId: interruptedActionId,
-          action,
-        }),
+        runAtomCommand(
+          registry,
+          manager.runStackedAction(targetKey),
+          {
+            actionId: interruptedActionId,
+            action,
+          },
+          { reportFailure: false, reportDefect: false },
+        ),
       );
 
       expect(AsyncResult.isFailure(interruptedResult)).toBe(true);
