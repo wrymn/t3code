@@ -1,8 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { VcsHookFailure } from "@t3tools/client-runtime/state/vcs";
 import { AuthSourceControlWriteScope } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
+import { useGT } from "gt-react-native";
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -24,12 +26,17 @@ export function GitHookFailureSheetHost() {
 }
 
 function GitHookFailureSheet({ failure }: { failure: VcsHookFailure }) {
+  const gt = useGT();
   const insets = useSafeAreaInsets();
   const canWrite = useEnvironmentScope(failure.target.environmentId, AuthSourceControlWriteScope);
   const refreshStatus = useAtomCommand(vcsEnvironment.refreshStatus, { reportFailure: false });
   const retrying = failure.pendingRetry;
   const repository = failure.target.cwd.split(/[\\/]/).findLast(Boolean) ?? failure.target.cwd;
   const output = failure.transcript.lines.join("\n");
+  const threadRef =
+    failure.threadId === null
+      ? null
+      : scopeThreadRef(failure.target.environmentId, failure.threadId);
 
   const retry = async (noVerify: boolean) => {
     const result = await vcsActionManager.retryHookFailure(appAtomRegistry, {
@@ -41,8 +48,11 @@ function GitHookFailureSheet({ failure }: { failure: VcsHookFailure }) {
       environmentId: failure.target.environmentId,
       input: { cwd: failure.target.cwd },
     });
+    // Results are shown in the thread that started the action; without one there is nowhere to show them.
+    if (threadRef === null) return;
     if (AsyncResult.isSuccess(result)) {
       showGitActionResult({
+        threadRef,
         type: "success",
         title: result.value.toast.title,
         description: result.value.toast.description,
@@ -57,15 +67,16 @@ function GitHookFailureSheet({ failure }: { failure: VcsHookFailure }) {
       return;
     const error = Cause.squash(result.cause);
     showGitActionResult({
+      threadRef,
       type: "error",
-      title: "Commit failed",
-      description: error instanceof Error ? error.message : "Git action failed.",
+      title: gt("Commit failed"),
+      description: error instanceof Error ? error.message : gt("Git action failed."),
     });
   };
 
   return (
     <Sheet
-      title="Commit blocked"
+      title={gt("Commit blocked")}
       onClose={() => vcsActionManager.dismissHookFailure(appAtomRegistry)}
     >
       <ScrollView
@@ -75,32 +86,37 @@ function GitHookFailureSheet({ failure }: { failure: VcsHookFailure }) {
         contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 20 }}
       >
         <Text className="pb-4 text-sm text-foreground-muted" numberOfLines={1}>
-          {failure.hookName} hook · {repository}
+          {gt("{hook} hook · {repository}", { hook: failure.hookName, repository })}
         </Text>
         <View className="overflow-hidden rounded-xl bg-card-alt p-3">
           <View className="flex-row justify-between gap-3 pb-2">
             <Text className="text-xs text-foreground-muted">
-              Hook output · exit {failure.exitCode}
+              {gt("Hook output · exit {code}", { code: failure.exitCode })}
             </Text>
             {failure.transcript.droppedLines > 0 ? (
               <Text className="text-xs text-foreground-muted">
-                {failure.transcript.droppedLines} earlier lines trimmed
+                {gt(
+                  "{count, plural, one {{count} earlier line trimmed} other {{count} earlier lines trimmed}}",
+                  { count: failure.transcript.droppedLines },
+                )}
               </Text>
             ) : null}
           </View>
           <Text
             selectable
-            accessibilityLabel={`${failure.hookName} hook output`}
+            accessibilityLabel={gt("{hook} hook output", { hook: failure.hookName })}
             className="text-xs text-foreground"
             style={{ fontFamily: REVIEW_MONO_FONT_FAMILY }}
           >
-            {output || "The hook printed no output."}
+            {output || gt("The hook printed no output.")}
           </Text>
         </View>
         <Text className="pt-4 text-xs text-foreground-muted">
           {failure.canSkipVerification
-            ? "Skipping verification bypasses all pre-commit and commit-message checks for this commit, including asset-lock checks."
-            : `${failure.hookName} cannot be skipped.`}
+            ? gt(
+                "Skipping verification bypasses all pre-commit and commit-message checks for this commit, including asset-lock checks.",
+              )
+            : gt("{hook} cannot be skipped.", { hook: failure.hookName })}
         </Text>
       </ScrollView>
       <View
@@ -108,7 +124,7 @@ function GitHookFailureSheet({ failure }: { failure: VcsHookFailure }) {
         style={{ paddingBottom: Math.max(16, insets.bottom) }}
       >
         <Button
-          label="Retry"
+          label={gt("Retry")}
           tone="primary"
           fullWidth
           loading={retrying !== null && !retrying.noVerify}
@@ -117,8 +133,8 @@ function GitHookFailureSheet({ failure }: { failure: VcsHookFailure }) {
         />
         {failure.canSkipVerification ? (
           <Button
-            label="Skip checks and commit"
-            accessibilityHint="Commits without running pre-commit and commit-message checks"
+            label={gt("Skip checks and commit")}
+            accessibilityHint={gt("Commits without running pre-commit and commit-message checks")}
             tone="secondary"
             fullWidth
             loading={retrying?.noVerify === true}
