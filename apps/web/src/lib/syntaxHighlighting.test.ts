@@ -4,6 +4,27 @@ import { describe, expect, it } from "vite-plus/test";
 import { getSyntaxHighlighterPromise } from "./syntaxHighlighting";
 import { DIFF_THEME_NAMES } from "./diffRendering";
 
+it.each(["csharp", "cpp", "typescript"])(
+  "uses Visual Assist Dark syntax colors in %s",
+  async (language) => {
+    const highlighter = await getSyntaxHighlighterPromise(language);
+    const code = '// comment\nreturn "hello";\nreturn 42;';
+    const { tokens } = highlighter.codeToTokens(code, {
+      lang: language,
+      theme: DIFF_THEME_NAMES.dark,
+    });
+    const colorOf = (text: string) =>
+      tokens
+        .flat()
+        .find((token) => token.content.includes(text))
+        ?.color?.toLowerCase();
+    expect(colorOf("// comment")).toBe("#57a64a");
+    expect(colorOf("return")).toBe("#d8a0df");
+    expect(colorOf("hello")).toBe("#d69d85");
+    expect(colorOf("42")).toBe("#b5cea8");
+  },
+);
+
 describe("dialect file types", () => {
   it.each([
     ["src/init.luau", "lua"],
