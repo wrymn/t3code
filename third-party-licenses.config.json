@@ -1,6 +1,13 @@
 {
   "customNotices": [
     {
+      "name": "Visual Assist Dark syntax palette",
+      "bundles": ["web"],
+      "license": "MIT",
+      "sourceUrl": "https://github.com/septag/vscode-vax-dark-theme",
+      "noticeFile": "apps/web/src/lib/visual-assist-dark.LICENSE"
+    },
+    {
       "name": "opencode Office viewers",
       "bundles": ["web"],
       "license": "MIT",
