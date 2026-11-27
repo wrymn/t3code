@@ -17,7 +17,6 @@ import { useEnvironmentScope } from "../../../state/session";
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { showGitActionResult } from "../../../state/use-vcs-action-state";
 import { vcsActionManager, vcsEnvironment } from "../../../state/vcs";
-import { REVIEW_MONO_FONT_FAMILY } from "../../review/reviewDiffRendering";
 
 /** Shows the commit a Git hook rejected, wherever it was started, until it is retried or closed. */
 export function GitHookFailureSheetHost() {
@@ -105,8 +104,7 @@ function GitHookFailureSheet({ failure }: { failure: VcsHookFailure }) {
           <Text
             selectable
             accessibilityLabel={gt("{hook} hook output", { hook: failure.hookName })}
-            className="text-xs text-foreground"
-            style={{ fontFamily: REVIEW_MONO_FONT_FAMILY }}
+            className="font-mono text-xs text-foreground"
           >
             {output || gt("The hook printed no output.")}
           </Text>
