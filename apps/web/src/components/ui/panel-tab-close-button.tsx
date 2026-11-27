@@ -1,5 +1,5 @@
 import { X } from "lucide-react";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 
 interface PanelTabCloseButtonProps {
   label: string;
@@ -22,10 +22,5 @@ export function PanelTabCloseButton({ label, onClick, tooltip }: PanelTabCloseBu
 
   if (!tooltip) return button;
 
-  return (
-    <Tooltip>
-      <TooltipTrigger render={button} />
-      <TooltipPopup>{tooltip}</TooltipPopup>
-    </Tooltip>
-  );
+  return <SharedTooltipTrigger render={button} label={tooltip} />;
 }
