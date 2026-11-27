@@ -7,7 +7,10 @@ import type { ThreadPreviewState } from "../../previewStateStore";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { useStableCallback } from "../../hooks/useStableCallback";
-import { type ScopedThreadRef, type RunId } from "@t3tools/contracts";
+import { type ScopedThreadRef, type PreviewSessionSnapshot } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { sideThreadComposer, sideThreadKindOf } from "@t3tools/client-runtime/side-thread";
+import { readThreadShell } from "../../state/entities";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useEffect } from "react";
 import {
@@ -49,7 +52,8 @@ interface RightPanelActionsInput {
   readonly isServerThread: boolean;
   /** A side chat pane; the main view already answers preview bus actions. */
   readonly embedded: boolean;
-  readonly isGitRepo: boolean;
+  /** The thread has a diff to show: a Git folder, or turns that changed tracked repositories. */
+  readonly diffAvailable: boolean;
   readonly browserAvailable: boolean;
   readonly canOperatePreview: boolean;
   readonly diffOpen: boolean;
@@ -62,7 +66,6 @@ interface RightPanelActionsInput {
   readonly gitCwd: string | null;
   readonly activeProjectCwd: string | null;
   readonly onDiffPanelOpen: (() => void) | undefined;
-  readonly closeRightPanelSurface: (surface: RightPanelSurface) => void;
 }
 
 /**
@@ -71,7 +74,6 @@ interface RightPanelActionsInput {
  */
 export function useRightPanelActions(input: RightPanelActionsInput) {
   const {
-    closeRightPanelSurface,
     activeThreadRef,
     activeProject,
     activeRightPanelSurface,
@@ -82,7 +84,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     threadPanelPresentation,
     isServerThread,
     embedded,
-    isGitRepo,
+    diffAvailable,
     browserAvailable,
     canOperatePreview,
     diffOpen,
@@ -99,9 +101,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
 
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const onToggleDiff = () => {
-    if (!isServerThread) {
-      return;
-    }
     if (!diffOpen) {
       onDiffPanelOpen?.();
     }
@@ -110,12 +109,13 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     }
   };
   const onToggleDiffStable = useStableCallback(onToggleDiff);
-  const createBrowserSurface = (profileId?: string) => {
+  const createBrowserSurface = (profileId?: string, duplicateFrom?: PreviewSessionSnapshot) => {
     if (!activeThreadRef || !canOperatePreview) return;
     void addBrowserSurface({
       threadRef: activeThreadRef,
       openPreview,
       ...(profileId === undefined ? {} : { profileId }),
+      ...(duplicateFrom === undefined ? {} : { duplicateFrom }),
     }).then((result) => {
       if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
       const error = squashAtomCommandFailure(result);
@@ -130,9 +130,15 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       }
     });
   };
+  const duplicateBrowserSurface = (surface: RightPanelSurface) => {
+    if (surface.kind !== "preview" || !surface.resourceId) return;
+    const snapshot = activePreviewState.sessions[surface.resourceId];
+    if (snapshot) createBrowserSurface(undefined, snapshot);
+  };
+  const duplicateBrowserSurfaceStable = useStableCallback(duplicateBrowserSurface);
   const createBrowserSurfaceStable = useStableCallback(createBrowserSurface);
   const addDiffSurface = () => {
-    if (!activeThreadRef || !isServerThread || !isGitRepo) return;
+    if (!activeThreadRef || !diffAvailable) return;
     useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
     useRightPanelStore.getState().open(activeThreadRef, "diff");
     onDiffPanelOpen?.();
@@ -177,6 +183,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       if (source) {
         settlePanelPreviewOnClose(activeThreadRef, source, {
           floatOnClose: getClientSettings().browserFloatPreviewOnPanelClose,
+          previewState: activePreviewState,
           deviceState: deviceStateLoaded ? deviceState : null,
         });
       }
@@ -209,11 +216,19 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     if (surface.kind === "terminal") {
       focusTerminal(activeThreadRef, surface.activeTerminalId);
     }
-    if (surface.kind === "side-chat") {
-      requestWorkspaceFocus({
-        area: "panel",
-        selector: `[data-side-chat-pane="${CSS.escape(surface.threadId)}"] [data-workspace-area="composer"] [contenteditable="true"]`,
-      });
+    if (surface.kind === "thread") {
+      const kind = sideThreadKindOf(
+        readThreadShell(scopeThreadRef(activeThreadRef.environmentId, surface.threadId)),
+      );
+      // A thread with no composer, or one not known yet, takes focus as any other tab does.
+      requestWorkspaceFocus(
+        kind !== null && sideThreadComposer(kind) === "composer"
+          ? {
+              area: "panel",
+              selector: `[data-side-chat-pane="${CSS.escape(surface.threadId)}"] [data-workspace-area="composer"] [contenteditable="true"]`,
+            }
+          : { area: "panel" },
+      );
     }
     if (surface.kind === "diff" && !diffOpen) {
       onDiffPanelOpen?.();
@@ -252,11 +267,11 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     useRightPanelStore.getState().setMaximized(activeThreadRef, !rightPanelMaximized);
   };
   const toggleRightPanelMaximizedStable = useStableCallback(toggleRightPanelMaximized);
-  const moveRightPanelSurface = (surfaceId: string, toIndex: number) => {
+  const moveRightPanelSurfaces = (surfaceIds: readonly string[], targetId: string) => {
     if (activeThreadRef)
-      useRightPanelStore.getState().moveSurface(activeThreadRef, surfaceId, toIndex);
+      useRightPanelStore.getState().moveSurfaces(activeThreadRef, surfaceIds, targetId);
   };
-  const moveRightPanelSurfaceStable = useStableCallback(moveRightPanelSurface);
+  const moveRightPanelSurfacesStable = useStableCallback(moveRightPanelSurfaces);
   const copyRightPanelFilePath = (relativePath: string) => {
     if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
       toastManager.add(
@@ -290,19 +305,12 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     useRightPanelStore.getState().openPullRequest(activeThreadRef, pullRequestPanelTarget);
   };
   const addPullRequestSurfaceStable = useStableCallback(addPullRequestSurface);
-  const onOpenTurnDiff = (runId: RunId, filePath?: string) => {
-    if (!isServerThread || !activeThreadRef) return;
-    useDiffPanelStore.getState().selectTurn(activeThreadRef, runId, filePath);
-    useRightPanelStore.getState().open(activeThreadRef, "diff");
-    onDiffPanelOpen?.();
-  };
   const onOpenToolDiffStable = useStableCallback((target: ToolCallDiffTarget) => {
     if (!isServerThread || !activeThreadRef) return;
     useDiffPanelStore.getState().selectToolCall(activeThreadRef, target);
     useRightPanelStore.getState().open(activeThreadRef, "diff");
     onDiffPanelOpen?.();
   });
-  const onOpenTurnDiffStable = useStableCallback(onOpenTurnDiff);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the preview action bus to toggle the preview panel
   useEffect(
     () =>
@@ -320,10 +328,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       if (!event.repeat) toggleRightPanelMaximized();
     },
     "threadPanel.toggle": () => toggleThreadPanel(),
-    "rightPanel.close": ({ event }) => {
-      if (!activeRightPanelSurface) return false;
-      if (!event.repeat) closeRightPanelSurface(activeRightPanelSurface);
-    },
     "diff.toggle": () => onToggleDiff(),
   } satisfies ChatShortcutCommands;
 
@@ -339,9 +343,9 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     copyRightPanelFilePathStable,
     createBrowserSurface,
     createBrowserSurfaceStable,
-    moveRightPanelSurfaceStable,
+    duplicateBrowserSurfaceStable,
+    moveRightPanelSurfacesStable,
     onOpenToolDiffStable,
-    onOpenTurnDiffStable,
     onToggleDiffStable,
     openChangesFromThreadPanelStable,
     openFileSurfaceStable,

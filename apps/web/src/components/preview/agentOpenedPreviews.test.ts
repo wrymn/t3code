@@ -14,12 +14,14 @@ import {
   applyPreviewServerSnapshot,
   beginPreviewSessionClose,
   cancelPreviewSessionClose,
+  type DesktopPreviewOverlay,
   reconcilePreviewServerSessions,
   resetPreviewStateForTests,
 } from "../../previewStateStore";
 import { useRightPanelStore } from "../../rightPanelStore";
 import {
   applyDeviceSnapshot,
+  floatBrowserSurface,
   floatDeviceSurface,
   followPreviewSessions,
   resetDeviceSessionBaselinesForTests,
@@ -196,6 +198,43 @@ describe("floatDeviceSurface", () => {
   });
 });
 
+describe("floatBrowserSurface", () => {
+  const tab = (navStatus: PreviewSessionSnapshot["navStatus"]): PreviewSessionSnapshot => ({
+    threadId: "thread-1",
+    tabId: "tab_a",
+    navStatus,
+    canGoBack: false,
+    canGoForward: false,
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const state = (
+    snapshot: PreviewSessionSnapshot,
+    desktopNavStatus?: PreviewSessionSnapshot["navStatus"],
+  ) => ({
+    ...previewStateTesting.EMPTY_THREAD_PREVIEW_STATE,
+    sessions: { tab_a: snapshot },
+    desktopByTabId: desktopNavStatus
+      ? { tab_a: { navStatus: desktopNavStatus } as DesktopPreviewOverlay }
+      : {},
+  });
+  const loading = { _tag: "Loading", url: "http://localhost:5173/", title: "" } as const;
+
+  it("floats a navigated tab but not one that never left the empty page", () => {
+    setup();
+    floatBrowserSurface(ref, "tab_a", state(tab({ _tag: "Idle" })));
+    expect(miniPlayerSource()).toBeUndefined();
+
+    floatBrowserSurface(ref, "tab_a", state(tab(loading)));
+    expect(miniPlayerSource()).toEqual(browserMiniPlayerSource("tab_a"));
+  });
+
+  it("follows the desktop page when the server snapshot has not caught up", () => {
+    setup();
+    floatBrowserSurface(ref, "tab_a", state(tab({ _tag: "Idle" }), loading));
+    expect(miniPlayerSource()).toEqual(browserMiniPlayerSource("tab_a"));
+  });
+});
+
 describe("settlePanelPreviewOnClose", () => {
   const browser = browserMiniPlayerSource("tab_panel");
   const pixel = {
@@ -237,6 +276,19 @@ describe("settlePanelPreviewOnClose", () => {
     if (before) usePreviewMiniPlayerStore.getState().open(ref, before);
     settlePanelPreviewOnClose(ref, source, {
       floatOnClose: on,
+      previewState: {
+        ...previewStateTesting.EMPTY_THREAD_PREVIEW_STATE,
+        sessions: {
+          tab_panel: {
+            threadId: "thread-1",
+            tabId: "tab_panel",
+            navStatus: { _tag: "Loading", url: "http://localhost:5173/", title: "" },
+            canGoBack: false,
+            canGoForward: false,
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        },
+      },
       deviceState: deviceState({ sessions: [session] }),
     });
     expect(miniPlayerSource()).toEqual(after);

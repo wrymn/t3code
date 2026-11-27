@@ -20,6 +20,7 @@ import {
   usePreviewMiniPlayerStore,
 } from "../../previewMiniPlayerStore";
 import {
+  previewNavStatus,
   previewStateAtom,
   previewThreadRefsAtom,
   type ThreadPreviewState,
@@ -213,6 +214,17 @@ export function floatDeviceSurface(
   usePreviewMiniPlayerStore.getState().open(threadRef, source);
 }
 
+/** Floats a browser panel tab over chat, unless it never navigated. */
+export function floatBrowserSurface(
+  threadRef: ScopedThreadRef,
+  tabId: string,
+  state: ThreadPreviewState,
+): void {
+  const snapshot = state.sessions[tabId] ?? null;
+  if (previewNavStatus(snapshot, state.desktopByTabId[tabId] ?? null)._tag === "Idle") return;
+  usePreviewMiniPlayerStore.getState().open(threadRef, browserMiniPlayerSource(tabId));
+}
+
 /**
  * Floats a panel's browser or device as the panel closes. With that off, a
  * float hidden behind the panel tab closes too, or it would reappear.
@@ -220,7 +232,11 @@ export function floatDeviceSurface(
 export function settlePanelPreviewOnClose(
   threadRef: ScopedThreadRef,
   source: PreviewMiniPlayerSource,
-  options: { readonly floatOnClose: boolean; readonly deviceState: DeviceServiceState | null },
+  options: {
+    readonly floatOnClose: boolean;
+    readonly previewState: ThreadPreviewState;
+    readonly deviceState: DeviceServiceState | null;
+  },
 ): void {
   const miniPlayer = usePreviewMiniPlayerStore.getState();
   if (!options.floatOnClose) {
@@ -229,7 +245,7 @@ export function settlePanelPreviewOnClose(
       miniPlayer.close(threadRef);
     }
   } else if (source.kind === "browser") {
-    miniPlayer.open(threadRef, source);
+    floatBrowserSurface(threadRef, source.tabId, options.previewState);
   } else {
     floatDeviceSurface(threadRef, source, options.deviceState);
   }
