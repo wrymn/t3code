@@ -491,6 +491,7 @@ const COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
   "rightPanel.close": msg("Right Panel: Close"),
   "pullRequest.copyNumber": msg("Pull Request: Copy Number"),
   "diff.toggle": msg("Diff: Toggle"),
+  "staging.toggle": msg("Staging: Toggle"),
   "preview.toggle": msg("Preview: Toggle"),
   "preview.refresh": msg("Preview: Refresh"),
   "preview.zoomIn": msg("Preview: Zoom In"),
