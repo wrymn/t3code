@@ -2052,6 +2052,8 @@
   "f2b4bf6e30024469": "Zwiń {path}",
   "13bad2d3b2d2471c": "Rozwiń diff",
   "3d117a49eb32d0cb": "Zwiń diff",
+  "6b638c82b90e3623": "Otwórz {filePath} w karcie",
+  "3fecb9248dda808f": "Otwórz plik w karcie",
   "cadc29aaf9f0fd05": "Automatycznie",
   "ec520ada4398caa3": "Commit {sha}",
   "cf34b1bdf8179c16": "Niezcommitowane",
