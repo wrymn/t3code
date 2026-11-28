@@ -20,6 +20,7 @@ import {
 } from "@t3tools/contracts";
 import { ToolCallVisibility } from "@t3tools/contracts/settings";
 import type { AndroidNavigationStyle } from "../lib/androidNavigationStyle";
+import type { MobileFontId, MobileMonoFontId } from "../lib/fontFamilies";
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
 import type { FollowUpBehavior } from "../lib/followUpBehavior";
 import { isMicrophoneKind, type MicrophoneEntry } from "../lib/microphonePriority";
@@ -139,6 +140,7 @@ export interface Preferences {
   /** Whether pull requests or issues last held the tab bar slot they share. */
   readonly sharedSlotTab?: "pullRequests" | "issues";
   readonly pullRequestHideTestFiles?: boolean;
+  readonly pullRequestHideViewedFiles?: boolean;
   /** Which hidden-by-default PR activity is shown: bot comments and resolved or dismissed ones. */
   readonly pullRequestActivityVisibility?: PullRequestActivityVisibility;
   readonly pullRequestMergeMethod?: PullRequestMergeMethod;
@@ -149,6 +151,8 @@ export interface Preferences {
   readonly themeMode?: MobileThemeMode;
   readonly androidNavigationStyle?: AndroidNavigationStyle;
   readonly baseFontSize?: number;
+  readonly fontId?: MobileFontId;
+  readonly monoFontId?: MobileMonoFontId;
   readonly terminalFontSize?: number | null;
   readonly markdownFontSize?: number;
   readonly codeFontSize?: number | null;
@@ -156,6 +160,8 @@ export interface Preferences {
   readonly mathRenderingEnabled?: boolean;
   /** Unset means on: crash reports are sent unless the user turns them off. */
   readonly crashReportsEnabled?: boolean;
+  /** Unset means on: connection traces are sent unless the user turns them off. */
+  readonly connectionTracesEnabled?: boolean;
   readonly connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
   readonly collapsedProjectGroups?: readonly string[];
   readonly dismissedDatabaseStorageNotices?: readonly string[];
@@ -171,6 +177,8 @@ export interface Preferences {
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
   readonly toolCallVisibility?: ToolCallVisibility;
   readonly workingShelfEnabled?: boolean;
+  /** The kind of question the Workflows tab's Needs you list was last narrowed to. */
+  readonly workflowQuestionKind?: string;
   readonly useLastProjectForNewThreads?: boolean;
   readonly lastThreadProject?: typeof ThreadProject.Type;
   readonly modelFavorites?: ReadonlyArray<{
@@ -235,6 +243,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     hiddenNavigationTabs?: readonly string[];
     sharedSlotTab?: "pullRequests" | "issues";
     pullRequestHideTestFiles?: boolean;
+    pullRequestHideViewedFiles?: boolean;
     pullRequestActivityVisibility?: PullRequestActivityVisibility;
     pullRequestMergeMethod?: PullRequestMergeMethod;
     liveActivitiesEnabled?: boolean;
@@ -244,12 +253,15 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     themeMode?: MobileThemeMode;
     androidNavigationStyle?: AndroidNavigationStyle;
     baseFontSize?: number;
+    fontId?: MobileFontId;
+    monoFontId?: MobileMonoFontId;
     terminalFontSize?: number | null;
     markdownFontSize?: number;
     codeFontSize?: number | null;
     codeWordBreak?: boolean;
     mathRenderingEnabled?: boolean;
     crashReportsEnabled?: boolean;
+    connectionTracesEnabled?: boolean;
     connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
     collapsedProjectGroups?: readonly string[];
     dismissedDatabaseStorageNotices?: readonly string[];
@@ -262,6 +274,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     projectGroupingMode?: SidebarProjectGroupingMode;
     toolCallVisibility?: ToolCallVisibility;
     workingShelfEnabled?: boolean;
+    workflowQuestionKind?: string;
     useLastProjectForNewThreads?: boolean;
     lastThreadProject?: typeof ThreadProject.Type;
     modelFavorites?: Preferences["modelFavorites"];
@@ -293,6 +306,10 @@ function sanitizePreferences(parsed: Preferences): Preferences {
 
   if (typeof parsed.pullRequestHideTestFiles === "boolean") {
     preferences.pullRequestHideTestFiles = parsed.pullRequestHideTestFiles;
+  }
+
+  if (typeof parsed.pullRequestHideViewedFiles === "boolean") {
+    preferences.pullRequestHideViewedFiles = parsed.pullRequestHideViewedFiles;
   }
 
   if (isPullRequestActivityVisibility(parsed.pullRequestActivityVisibility)) {
@@ -335,6 +352,10 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     preferences.androidNavigationStyle = parsed.androidNavigationStyle;
   }
   if (typeof parsed.baseFontSize === "number") preferences.baseFontSize = parsed.baseFontSize;
+  if (parsed.fontId === "system" || parsed.fontId === "dm-sans") preferences.fontId = parsed.fontId;
+  if (parsed.monoFontId === "system" || parsed.monoFontId === "meslo") {
+    preferences.monoFontId = parsed.monoFontId;
+  }
   if (typeof parsed.terminalFontSize === "number" || parsed.terminalFontSize === null) {
     preferences.terminalFontSize = parsed.terminalFontSize;
   }
@@ -349,6 +370,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     preferences.mathRenderingEnabled = parsed.mathRenderingEnabled;
   if (typeof parsed.crashReportsEnabled === "boolean") {
     preferences.crashReportsEnabled = parsed.crashReportsEnabled;
+  }
+  if (typeof parsed.connectionTracesEnabled === "boolean") {
+    preferences.connectionTracesEnabled = parsed.connectionTracesEnabled;
   }
   if (Array.isArray(parsed.connectOnboardingOptOutAccounts)) {
     preferences.connectOnboardingOptOutAccounts = parsed.connectOnboardingOptOutAccounts.filter(
@@ -406,6 +430,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.workingShelfEnabled === "boolean") {
     preferences.workingShelfEnabled = parsed.workingShelfEnabled;
+  }
+  if (typeof parsed.workflowQuestionKind === "string") {
+    preferences.workflowQuestionKind = parsed.workflowQuestionKind;
   }
   if (typeof parsed.useLastProjectForNewThreads === "boolean") {
     preferences.useLastProjectForNewThreads = parsed.useLastProjectForNewThreads;

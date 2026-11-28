@@ -95,6 +95,7 @@ const layerFor = (state: State, options: Options) => {
   );
   const layerTaskFolders = layerTaskFoldersWithGit(state).pipe(Layer.provide(layerGit));
   const layerProjections = ProjectionStore.layer.pipe(
+    Layer.provide(NodeCrypto.layer),
     Layer.provideMerge(SqlitePersistence.layerMemory),
   );
   const layerProjects = Layer.mock(ProjectStore.ProjectStoreV2)({
@@ -247,7 +248,7 @@ const taskFolderThread = Effect.fn(function* (state: State, options: Options) {
       branch,
       projectStart: { refName: "main", baseRefName: "main" },
       startFromOrigin: false,
-      projectCommands: true,
+      projectCommands: "permitted",
     })
     .pipe(Effect.provide(TestClock.layer()));
   const worktreePath = taskFolder.projectPath;
@@ -734,7 +735,7 @@ it.live.each([{ projectIsRepository: true }, { projectIsRepository: false }])(
           root: taskFolder.root,
           force: true,
           forget: false,
-          projectCommands: true,
+          projectCommands: "permitted",
         });
         assert.deepEqual(removal.kept, []);
         assert.isFalse(yield* fileSystem.exists(taskFolder.root));
